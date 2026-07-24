@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Flow Batch Studio</title>
+    <link rel="stylesheet" href="sidepanel.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand-mark" aria-hidden="true">
+          <span></span><span></span><span></span>
+        </div>
+        <div class="brand-copy">
+          <h1>Flow Batch Studio</h1>
+          <p>이미지 생성 큐</p>
+        </div>
+        <button id="checkFlowButton" class="connection-pill" type="button" title="Flow 연결 확인">
+          <span id="connectionDot" class="connection-dot"></span>
+          <span id="connectionLabel">연결 확인</span>
+        </button>
+      </header>
+
+      <main>
+        <section class="status-card" aria-labelledby="queueStatusTitle">
+          <div class="status-heading">
+            <div>
+              <p class="eyebrow">QUEUE STATUS</p>
+              <h2 id="queueStatusTitle">작업 준비</h2>
+            </div>
+            <span id="statusBadge" class="status-badge status-idle">대기</span>
+          </div>
+          <div class="overall-progress" aria-label="전체 진행률">
+            <div id="overallProgressBar" class="overall-progress-bar"></div>
+          </div>
+          <div class="stat-grid">
+            <div><strong id="completedStat">0</strong><span>완료 작업</span></div>
+            <div><strong id="imageStat">0</strong><span>생성 이미지</span></div>
+            <div><strong id="characterStat">0/0</strong><span>캐릭터</span></div>
+            <div><strong id="remainingStat">0</strong><span>남은 작업</span></div>
+          </div>
+          <div id="countdownRow" class="countdown-row" hidden>
+            <span class="countdown-icon" aria-hidden="true">◷</span>
+            <span id="countdownText">다음 작업까지 01:00</span>
+          </div>
+          <div id="errorBanner" class="error-banner" hidden></div>
+          <div class="project-download-box">
+            <div>
+              <strong>프로젝트 결과</strong>
+              <span>모든 미디어 카드 순서대로 장면 번호와 캐릭터 이름을 저장</span>
+            </div>
+            <button id="downloadProjectButton" class="download-project-button" type="button" disabled>
+              <span aria-hidden="true">⇩</span> 프로젝트 ZIP 다운로드
+            </button>
+            <div id="downloadProgress" class="download-progress" hidden>
+              <div><span id="downloadProgressBar"></span></div>
+              <p id="downloadStatus">Flow 이미지 URL과 ZIP 파일을 준비합니다.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel-card" aria-labelledby="sourceTitle">
+          <div class="section-heading">
+            <div>
+              <p class="section-step">01</p>
+              <div>
+                <h2 id="sourceTitle">프롬프트 가져오기</h2>
+                <p id="sourceSubtitle">Markdown 파일 또는 텍스트</p>
+              </div>
+            </div>
+            <button id="clearSourceButton" class="text-button" type="button">비우기</button>
+          </div>
+
+          <div class="mode-switch" role="tablist" aria-label="이미지 생성 모드">
+            <button id="sceneModeButton" class="mode-button" type="button" role="tab" aria-selected="true">장면 생성</button>
+            <button id="introModeButton" class="mode-button" type="button" role="tab" aria-selected="false">인트로 이미지</button>
+          </div>
+          <p id="modeDescription" class="mode-description">장면용 프롬프트 파일을 분석해 캐릭터 생성과 장면 생성을 순서대로 진행합니다.</p>
+
+          <label id="dropZone" class="drop-zone" for="fileInput">
+            <input id="fileInput" type="file" accept=".md,.txt,text/markdown,text/plain" />
+            <span class="drop-icon" aria-hidden="true">⇧</span>
+            <span><strong id="dropZoneAction">파일을 선택</strong><span id="dropZoneRest">하거나 여기에 놓으세요</span></span>
+            <small id="dropZoneHint">.md · .txt</small>
+          </label>
+          <p id="introFileStatus" class="intro-file-status" hidden></p>
+
+          <div id="sourceOrDivider" class="or-divider"><span>또는 붙여넣기</span></div>
+          <label id="promptSourceLabel" class="sr-only" for="promptSource">이미지 프롬프트 텍스트</label>
+          <textarea id="promptSource" rows="8" placeholder="## 이미지 1&#10;비 오는 밤, 네온사인 골목…&#10;&#10;## 이미지 2&#10;해 질 무렵의 바닷가…"></textarea>
+
+          <div id="analysisSummary" class="analysis-summary" hidden>
+            <div>
+              <strong id="detectedJobCount">0개 작업</strong>
+              <span id="detectedImageCount">총 0장</span>
+              <span id="detectedCharacterCount"></span>
+            </div>
+            <span id="detectedFormat" class="format-chip">분석 완료</span>
+          </div>
+          <p id="analysisWarning" class="analysis-warning" hidden></p>
+          <div id="previewList" class="preview-list"></div>
+          <button id="applyQueueButton" class="secondary-button full-width" type="button" disabled>분석 결과를 작업 큐에 적용</button>
+        </section>
+
+        <section class="panel-card compact-card" aria-labelledby="settingsTitle">
+          <div class="section-heading">
+            <div>
+              <p class="section-step">02</p>
+              <div>
+                <h2 id="settingsTitle">생성 규칙</h2>
+                <p>작업마다 Flow 설정을 검증합니다</p>
+              </div>
+            </div>
+          </div>
+          <label class="model-field" for="modelSelect">
+            <span><strong>생성 모델</strong><small>실패 지점부터 다른 모델로 변경 가능</small></span>
+            <select id="modelSelect">
+              <option value="Nano Banana Pro">🍌 Nano Banana Pro</option>
+              <option value="Nano Banana 2" selected>🍌 Nano Banana 2</option>
+              <option value="Nano Banana 2 Lite">🍌 Nano Banana 2 Lite</option>
+            </select>
+          </label>
+          <div class="setting-chips" aria-label="고정 생성 설정">
+            <span>16:9</span>
+            <span>2장</span>
+            <span>모든 미디어 · 에이전트 OFF</span>
+            <span>실행 중 자동 잠금 방지</span>
+          </div>
+          <label class="delay-field" for="delaySeconds">
+            <span><strong>작업 사이 대기</strong><small>최소 60초</small></span>
+            <span class="number-input"><input id="delaySeconds" type="number" min="60" max="600" step="10" value="60" /><em>초</em></span>
+          </label>
+          <label id="existingCharactersRow" class="checkbox-field" hidden>
+            <input id="charactersAlreadyRegistered" type="checkbox" />
+            <span>
+              <strong>동일한 이름의 캐릭터가 이미 등록됨</strong>
+              <small>선택하면 5명 생성을 건너뛰고 @이름 매핑만 검증합니다</small>
+            </span>
+          </label>
+          <p class="safety-note">고정 간격으로 한 작업씩 실행합니다. 계정 확인이나 CAPTCHA가 표시되면 자동으로 멈춥니다.</p>
+        </section>
+
+        <section id="characterSection" class="panel-card" aria-labelledby="charactersTitle" hidden>
+          <div class="section-heading">
+            <div>
+              <p class="section-step">03</p>
+              <div>
+                <h2 id="charactersTitle">캐릭터 준비</h2>
+                <p id="characterListCaption">장면보다 먼저 생성·등록합니다</p>
+              </div>
+            </div>
+            <button id="syncCharactersButton" class="text-button" type="button">Flow와 동기화</button>
+          </div>
+          <div id="characterList" class="character-list"></div>
+          <p class="mapping-note"><strong>시작 단계 지정</strong> Flow에 이미 있는 캐릭터는 카드 우측 체크박스를 켜 생성 단계를 건너뜁니다. <strong>매핑 규칙</strong> Flow 등록 이름을 파일 키와 정확히 일치시키고 장면 입력 시 실제 참조 토큰으로 연결합니다.</p>
+        </section>
+
+        <section id="queueSection" class="panel-card" aria-labelledby="jobsTitle">
+          <div class="section-heading">
+            <div>
+              <p class="section-step">04</p>
+              <div>
+                <h2 id="jobsTitle">이미지 작업 목록</h2>
+                <p id="jobListCaption">아직 적용된 작업이 없습니다</p>
+              </div>
+            </div>
+            <button id="retryFailedButton" class="text-button" type="button" hidden>실패 재시도</button>
+          </div>
+          <div id="jobList" class="job-list">
+            <div class="empty-state">
+              <span>◇</span>
+              <p>프롬프트를 분석한 뒤<br />작업 큐에 적용하세요.</p>
+            </div>
+          </div>
+          <p class="mapping-note"><strong>이미지 시작 단계</strong> 이미 끝난 장면 또는 인트로 작업은 카드 우측 체크박스를 켜 건너뛸 수 있습니다.</p>
+        </section>
+      </main>
+
+      <footer class="control-dock">
+        <button id="openFlowButton" class="icon-button" type="button" title="Flow 열기" aria-label="Flow 열기">↗</button>
+        <button id="startButton" class="primary-button grow" type="button" disabled>생성 시작</button>
+        <button id="pauseButton" class="danger-button grow" type="button" hidden>현재 작업 후 중단</button>
+        <button id="resumeButton" class="primary-button grow" type="button" hidden>이어서 실행</button>
+        <button id="retryFailedFooterButton" class="danger-button grow" type="button" hidden>실패 작업 다시 실행</button>
+        <button id="resetButton" class="icon-button" type="button" title="큐 초기화" aria-label="큐 초기화" disabled>↺</button>
+      </footer>
+      <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+    </div>
+    <script type="module" src="sidepanel.js"></script>
+  </body>
+</html>
