@@ -24,8 +24,18 @@ import {
   uniqueAssets
 } from "./lib/download-manifest.js";
 import { requireArchiveResult } from "./lib/archive-result.js";
+import {
+  PROJECT_HISTORY_KEY,
+  buildProjectCharacterProfile,
+  findProjectCharacterProfile,
+  normalizeProjectHistory,
+  projectIdFromFlowUrl,
+  projectTitleFromTabTitle,
+  upsertProjectCharacterProfile
+} from "./lib/project-history.js";
 
 let stateMutation = Promise.resolve();
+let projectHistoryMutation = Promise.resolve();
 let launchInProgress = false;
 let downloadInProgress = false;
 
@@ -69,6 +79,63 @@ function updateState(mutator) {
 
 function isFlowUrl(url) {
   return /^https:\/\/labs\.google\/fx\/(?:[^/]+\/)?tools\/flow(?:\/|$)/i.test(String(url || ""));
+}
+
+function flowProjectFromTab(tab) {
+  const projectId = projectIdFromFlowUrl(tab?.url);
+  return projectId ? {
+    tab,
+    projectId,
+    projectTitle: projectTitleFromTabTitle(tab?.title)
+  } : null;
+}
+
+async function findActiveFlowTab() {
+  const activeTabs = await chrome.tabs.query({ active: true, currentWindow: true });
+  return activeTabs.find((tab) => isFlowUrl(tab.url)) || null;
+}
+
+async function findCurrentFlowProject(preferredTabId, { preferActive = false } = {}) {
+  const tab = preferActive
+    ? await findActiveFlowTab() || await findFlowTab(preferredTabId)
+    : await findFlowTab(preferredTabId);
+  return flowProjectFromTab(tab);
+}
+
+function projectProfileSummary(profile) {
+  if (!profile) return null;
+  return {
+    projectId: profile.projectId,
+    projectTitle: profile.projectTitle,
+    characterCount: profile.characters.length,
+    registeredCount: profile.registeredKeys.length,
+    updatedAt: profile.updatedAt
+  };
+}
+
+async function readProjectHistory() {
+  const stored = await chrome.storage.local.get(PROJECT_HISTORY_KEY);
+  return normalizeProjectHistory(stored[PROJECT_HISTORY_KEY]);
+}
+
+function archiveProjectCharacters(state) {
+  if (!state?.flowProjectId || !Array.isArray(state.characters) || !state.characters.length) {
+    return Promise.resolve(null);
+  }
+  const profile = buildProjectCharacterProfile({
+    projectId: state.flowProjectId,
+    projectTitle: state.flowProjectTitle,
+    characters: state.characters,
+    registeredKeys: state.lastFlowRegisteredKeys
+  });
+  const operation = projectHistoryMutation.then(async () => {
+    const history = await readProjectHistory();
+    const next = upsertProjectCharacterProfile(history, profile);
+    await chrome.storage.local.set({ [PROJECT_HISTORY_KEY]: next });
+    return findProjectCharacterProfile(next, profile.projectId);
+  });
+  projectHistoryMutation = operation.catch(() => {});
+  return operation;
 }
 
 async function findFlowTab(preferredTabId) {
@@ -517,6 +584,7 @@ async function completeTask(taskId, taskType, imagesGenerated, assets = []) {
       draft.nextRunAt = Date.now() + Math.max(MIN_DELAY_MS, draft.options.delayMs);
     }
   });
+  if (taskType === "character") await archiveProjectCharacters(state);
 
   if (state.status === "waiting" && state.nextRunAt) {
     await chrome.alarms.create(QUEUE_ALARM, { when: state.nextRunAt });
@@ -611,9 +679,15 @@ async function synchronizeFlowCharacters() {
     return { state: current, registeredKeys: [], matchedKeys: [], surface: null };
   }
 
-  const tab = await findFlowTab(current.tabId);
-  if (!tab?.id) throw new Error("Flow 캐릭터 상태를 확인할 프로젝트 탭이 없습니다.");
-  const scan = await sendToTab(tab.id, {
+  const flowProject = await findCurrentFlowProject(current.tabId);
+  if (!flowProject?.tab?.id) throw new Error("Flow 캐릭터 상태를 확인할 프로젝트 탭이 없습니다.");
+  if (!current.flowProjectId && current.characters.length) {
+    throw new Error("이전 작업의 캐릭터 원본 프로젝트를 확인할 수 없습니다. 프로젝트 캐릭터 불러오기로 현재 Flow 등록 정보를 먼저 읽어 주세요.");
+  }
+  if (current.flowProjectId && current.flowProjectId !== flowProject.projectId) {
+    throw new Error("현재 Flow 프로젝트가 작업 큐의 캐릭터 프로젝트와 다릅니다. 프로젝트 캐릭터 불러오기를 먼저 실행해 주세요.");
+  }
+  const scan = await sendToTab(flowProject.tab.id, {
     type: "SCAN_FLOW_CHARACTERS",
     characterKeys: current.characters.map((character) => character.key)
   });
@@ -632,7 +706,9 @@ async function synchronizeFlowCharacters() {
       const asset = scannedAssets.get(String(character.key || "").trim().toLowerCase());
       if (asset) character.resultAssets = uniqueAssets([asset]).slice(0, 1);
     }
-    draft.tabId = tab.id;
+    draft.tabId = flowProject.tab.id;
+    draft.flowProjectId = flowProject.projectId;
+    draft.flowProjectTitle = flowProject.projectTitle;
     draft.flowConnected = true;
     draft.flowSurface = String(scan.surface || "unknown");
     draft.lastFlowSyncAt = Date.now();
@@ -646,12 +722,100 @@ async function synchronizeFlowCharacters() {
       draft.lastError = null;
     }
   });
+  await archiveProjectCharacters(state);
 
   return {
     state,
     registeredKeys: Array.isArray(scan.registeredKeys) ? scan.registeredKeys : [],
     matchedKeys,
     surface: scan.surface || "unknown"
+  };
+}
+
+async function loadCurrentProjectCharacters() {
+  const current = await readState();
+  if (current.activeJobId || ["running", "waiting", "pausing"].includes(current.status)) {
+    throw new Error("실행 중인 큐를 먼저 중단한 뒤 프로젝트 캐릭터를 불러와 주세요.");
+  }
+  const flowProject = await findCurrentFlowProject(current.tabId, { preferActive: true });
+  if (!flowProject?.tab?.id) throw new Error("주소에 프로젝트 ID가 있는 Flow 프로젝트 탭을 열어 주세요.");
+  const history = await readProjectHistory();
+  const profile = findProjectCharacterProfile(history, flowProject.projectId);
+  if (!profile) {
+    const scan = await sendToTab(flowProject.tab.id, { type: "DISCOVER_FLOW_CHARACTERS" });
+    if (!scan?.ready) throw new Error(scan?.error || "Flow 캐릭터 라이브러리를 읽지 못했습니다.");
+    if (scan.inProgress) throw new Error("Flow에서 캐릭터 생성이 진행 중입니다. 완료될 때까지 현재 화면을 유지해 주세요.");
+    const keys = Array.from(new Set((scan.registeredKeys || []).map(String).filter(Boolean)));
+    if (!keys.length) throw new Error("이 Flow 프로젝트에서 @이름 형식의 등록 캐릭터를 찾지 못했습니다.");
+    const imported = await updateState((state) => {
+      state.characters = createCharacters(keys.map((key) => ({
+        key,
+        displayName: key,
+        description: "Flow 프로젝트에 이미 등록된 캐릭터",
+        prompt: `Flow 프로젝트에 이미 등록된 @${key} 캐릭터`,
+        referenceCount: 0
+      })), { alreadyRegistered: true });
+      state.jobs = [];
+      state.queueMode = "scene";
+      state.executionMode = "automatic";
+      state.status = "idle";
+      state.phase = "scenes";
+      state.activeJobId = null;
+      state.activeTaskType = null;
+      state.nextRunAt = null;
+      state.pauseRequested = false;
+      state.manualPause = false;
+      state.flowConnected = true;
+      state.flowSurface = String(scan.surface || "unknown");
+      state.flowProjectId = flowProject.projectId;
+      state.flowProjectTitle = flowProject.projectTitle;
+      state.tabId = flowProject.tab.id;
+      state.lastFlowRegisteredKeys = keys;
+      state.lastFlowSyncAt = Date.now();
+      state.lastFlowSceneImageCount = null;
+      state.lastFlowImageSyncAt = null;
+      state.lastError = null;
+    });
+    const saved = await archiveProjectCharacters(imported);
+    return {
+      state: imported,
+      registeredKeys: keys,
+      matchedKeys: keys,
+      surface: scan.surface || "unknown",
+      profile: projectProfileSummary(saved),
+      importedFromFlow: true
+    };
+  }
+
+  const loaded = await updateState((state) => {
+    state.characters = createCharacters(profile.characters);
+    state.jobs = [];
+    state.queueMode = "scene";
+    state.executionMode = "automatic";
+    state.status = "idle";
+    state.phase = state.characters.length ? "characters" : "idle";
+    state.activeJobId = null;
+    state.activeTaskType = null;
+    state.nextRunAt = null;
+    state.pauseRequested = false;
+    state.manualPause = false;
+    state.flowConnected = true;
+    state.flowSurface = null;
+    state.flowProjectId = flowProject.projectId;
+    state.flowProjectTitle = flowProject.projectTitle;
+    state.tabId = flowProject.tab.id;
+    state.lastFlowRegisteredKeys = [];
+    state.lastFlowSyncAt = null;
+    state.lastFlowSceneImageCount = null;
+    state.lastFlowImageSyncAt = null;
+    state.lastError = null;
+  });
+  await archiveProjectCharacters(loaded);
+  const sync = await synchronizeFlowCharacters();
+  return {
+    ...sync,
+    profile: projectProfileSummary(profile),
+    importedFromFlow: false
   };
 }
 
@@ -969,10 +1133,17 @@ async function handleUiMessage(message) {
 
   if (message.type === "SET_QUEUE") {
     await chrome.alarms.clear(QUEUE_ALARM);
-    return updateState((state) => {
+    const current = await readState();
+    const reuseExistingCharacters = Boolean(message.reuseExistingCharacters);
+    const flowProject = await findCurrentFlowProject(current.tabId, { preferActive: true });
+    if (reuseExistingCharacters
+      && current.characters.length
+      && (!current.flowProjectId || !flowProject?.projectId || current.flowProjectId !== flowProject.projectId)) {
+      throw new Error("현재 Flow 프로젝트가 기존 캐릭터 작업내역과 다릅니다. 프로젝트 캐릭터 불러오기를 먼저 실행해 주세요.");
+    }
+    const nextState = await updateState((state) => {
       if (state.activeJobId) throw new Error("진행 중인 이미지 작업이 끝난 뒤 새 큐를 적용해 주세요.");
       const previousState = { characters: state.characters, jobs: state.jobs };
-      const reuseExistingCharacters = Boolean(message.reuseExistingCharacters);
       const isIntroQueue = message.queueMode === "intro";
       const existingJobs = reuseExistingCharacters ? state.jobs.map((job) => ({ ...job })) : [];
       const existingMaximum = existingJobs.reduce((maximum, job, index) => Math.max(maximum, Number(job.number || index + 1)), 0);
@@ -1002,11 +1173,27 @@ async function handleUiMessage(message) {
       state.pauseRequested = false;
       state.manualPause = false;
       state.lastError = null;
+      if (flowProject) {
+        state.tabId = flowProject.tab.id;
+        state.flowProjectId = flowProject.projectId;
+        state.flowProjectTitle = flowProject.projectTitle;
+        state.flowConnected = true;
+      } else if (!reuseExistingCharacters) {
+        state.tabId = null;
+        state.flowProjectId = "";
+        state.flowProjectTitle = "";
+      }
     });
+    await archiveProjectCharacters(nextState);
+    return nextState;
   }
 
   if (message.type === "SYNC_FLOW_STATE") {
     return synchronizeFlowCharacters();
+  }
+
+  if (message.type === "LOAD_PROJECT_CHARACTERS") {
+    return loadCurrentProjectCharacters();
   }
 
   if (message.type === "SET_CHARACTER_READY") {
@@ -1086,7 +1273,6 @@ async function handleUiMessage(message) {
       target.error = null;
       state.status = "paused";
       state.phase = "scenes";
-      state.executionMode = "manual";
       state.manualPause = true;
       state.pauseRequested = false;
       state.nextRunAt = null;
@@ -1253,15 +1439,30 @@ async function handleUiMessage(message) {
 
   if (message.type === "CHECK_FLOW") {
     const state = await readState();
-    const tab = await findFlowTab(state.tabId);
-    if (!tab?.id) return { connected: false, error: "열린 Flow 프로젝트 탭이 없습니다." };
+    const flowProject = await findCurrentFlowProject(state.tabId, { preferActive: true });
+    if (!flowProject?.tab?.id) return { connected: false, error: "열린 Flow 프로젝트 탭이 없습니다." };
     try {
-      const diagnostics = await sendToTab(tab.id, { type: "GET_FLOW_DIAGNOSTICS" });
+      const diagnostics = await sendToTab(flowProject.tab.id, { type: "GET_FLOW_DIAGNOSTICS" });
+      const profile = findProjectCharacterProfile(await readProjectHistory(), flowProject.projectId);
       await updateState((draft) => {
-        draft.tabId = tab.id;
         draft.flowConnected = Boolean(diagnostics?.ready);
+        if ((!draft.flowProjectId && !draft.characters.length) || draft.flowProjectId === flowProject.projectId) {
+          draft.tabId = flowProject.tab.id;
+          draft.flowProjectId = flowProject.projectId;
+          draft.flowProjectTitle = flowProject.projectTitle;
+        }
       });
-      return { connected: Boolean(diagnostics?.ready), tabId: tab.id, diagnostics };
+      return {
+        connected: Boolean(diagnostics?.ready),
+        tabId: flowProject.tab.id,
+        diagnostics,
+        project: {
+          projectId: flowProject.projectId,
+          projectTitle: flowProject.projectTitle,
+          savedProfile: projectProfileSummary(profile),
+          activeQueueProjectId: state.flowProjectId || ""
+        }
+      };
     } catch (error) {
       return { connected: false, error: String(error?.message || error) };
     }

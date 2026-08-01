@@ -1052,6 +1052,32 @@
     };
   }
 
+  function characterKeyFromLabel(value) {
+    const key = String(value || "").trim().replace(/^@/, "");
+    return /^[A-Za-z][\w-]*$/.test(key) ? key : "";
+  }
+
+  function discoverRegisteredCharacterKeys() {
+    const keys = new Set();
+    for (const image of Array.from(document.querySelectorAll("img"))) {
+      if (!visible(image)) continue;
+      const rect = image.getBoundingClientRect();
+      if (rect.width < 80 || rect.height < 80) continue;
+      const key = characterKeyFromLabel(image.getAttribute("alt") || image.getAttribute("aria-label"));
+      if (key) keys.add(key);
+    }
+    for (const link of Array.from(document.querySelectorAll('a[href*="/character/"]'))) {
+      if (!visible(link)) continue;
+      const labels = [link.getAttribute("aria-label"), link.textContent, link.querySelector("img")?.getAttribute("alt")];
+      for (const label of labels) {
+        const direct = characterKeyFromLabel(label);
+        if (direct) keys.add(direct);
+        for (const match of String(label || "").matchAll(/@([A-Za-z][\w-]*)/g)) keys.add(match[1]);
+      }
+    }
+    return [...keys];
+  }
+
   function detectFlowSurface() {
     if (findCharacterCreatorInput()) return "character-creator";
     if (findNewCharacterButton()) return "character-library";
@@ -1141,6 +1167,17 @@
       ready: true,
       inProgress: false,
       surface: detectFlowSurface(),
+      registeredKeys,
+      characterAssets: registeredKeys.map(registeredCharacterAsset).filter(Boolean)
+    };
+  }
+
+  async function discoverFlowCharacters() {
+    const scan = await scanFlowCharacters([]);
+    if (scan.inProgress) return scan;
+    const registeredKeys = discoverRegisteredCharacterKeys();
+    return {
+      ...scan,
       registeredKeys,
       characterAssets: registeredKeys.map(registeredCharacterAsset).filter(Boolean)
     };
@@ -1705,6 +1742,13 @@
 
     if (message?.type === "SCAN_FLOW_CHARACTERS") {
       void scanFlowCharacters(message.characterKeys || [])
+        .then((result) => sendResponse(result))
+        .catch((error) => sendResponse({ ready: false, error: String(error?.message || error) }));
+      return true;
+    }
+
+    if (message?.type === "DISCOVER_FLOW_CHARACTERS") {
+      void discoverFlowCharacters()
         .then((result) => sendResponse(result))
         .catch((error) => sendResponse({ ready: false, error: String(error?.message || error) }));
       return true;

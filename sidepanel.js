@@ -8,10 +8,11 @@ const elements = Object.fromEntries(
     "countdownText", "errorBanner", "fileInput", "dropZone", "promptSource", "clearSourceButton", "sceneModeButton", "introModeButton", "modeDescription",
     "sourceSubtitle", "dropZoneAction", "dropZoneRest", "dropZoneHint", "introFileStatus", "sourceOrDivider", "promptSourceLabel",
     "analysisSummary", "detectedJobCount", "detectedImageCount", "detectedCharacterCount", "detectedFormat", "analysisWarning",
-    "previewList", "applyQueueButton", "modelSelect", "delaySeconds", "existingCharactersRow", "charactersAlreadyRegistered",
+    "previewList", "applyQueueButton", "applyQueueButtonHint", "applyQueueReason", "modelSelect", "delaySeconds", "existingCharactersRow", "charactersAlreadyRegistered",
+    "projectMemoryBox", "projectMemoryStatus", "loadProjectCharactersButton",
     "characterSection", "characterListCaption", "characterList", "syncCharactersButton", "jobListCaption", "jobList", "retryFailedButton",
     "downloadProjectButton", "downloadProgress", "downloadProgressBar", "downloadStatus",
-    "openFlowButton", "startButton", "pauseButton", "resumeButton", "retryFailedFooterButton", "resetButton", "toast"
+    "openFlowButton", "startButton", "startButtonHint", "pauseButton", "resumeButton", "retryFailedFooterButton", "resetButton", "queueControlReason", "toast"
   ].map((id) => [id, document.getElementById(id)])
 );
 
@@ -25,6 +26,7 @@ let introFileName = "";
 let toastTimer = null;
 let sourceSaveTimer = null;
 let downloadBusy = false;
+let currentFlowProject = null;
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -56,6 +58,84 @@ function setConnected(connected, label) {
 
 function knownCharacterKeys() {
   return (state.characters || []).map((character) => character.key).filter(Boolean);
+}
+
+function uniqueUnknownCharacterKeys() {
+  return [...new Set((analysis.unknownRefs || []).map((entry) => String(entry.key || "").trim()).filter(Boolean))];
+}
+
+function setDisabledReason(button, hint, reason, reasonElement = null) {
+  const message = reason ? `비활성화 이유: ${reason}` : "";
+  button.disabled = Boolean(reason);
+  button.title = message;
+  hint.title = message;
+  if (!reasonElement) {
+    button.removeAttribute("aria-describedby");
+    return;
+  }
+  if (reason) button.setAttribute("aria-describedby", reasonElement.id);
+  else button.removeAttribute("aria-describedby");
+  reasonElement.hidden = !reason;
+  reasonElement.textContent = reason ? `비활성화 이유 · ${reason}` : "";
+}
+
+function applyQueueDisabledReason() {
+  const active = Boolean(state.activeJobId) || ["running", "waiting", "pausing"].includes(state.status);
+  if (active) return "현재 큐가 실행 중입니다. 현재 작업을 중단하거나 완료한 뒤 새 작업을 적용하세요.";
+  const unknownKeys = uniqueUnknownCharacterKeys();
+  if (unknownKeys.length) {
+    return `현재 Flow 프로젝트에 준비된 캐릭터가 아닙니다: ${unknownKeys.map((key) => `@${key}`).join(", ")}. 생성 규칙에서 ‘저장된 캐릭터 불러오기’ 또는 ‘Flow 등록 캐릭터 읽기’를 먼저 실행하세요.`;
+  }
+  if (inputMode === "intro" && !knownCharacterKeys().length) {
+    return "인트로·썸네일에는 현재 Flow 프로젝트의 캐릭터가 필요합니다. 생성 규칙에서 프로젝트 캐릭터를 먼저 불러오세요.";
+  }
+  if (!analysis.prompts.length) {
+    return inputMode === "intro"
+      ? "인트로 파일의 [A] 이미지 프롬프트 또는 썸네일 프롬프트를 입력하세요."
+      : "장면용 프롬프트 파일 또는 텍스트를 입력하세요.";
+  }
+  return "";
+}
+
+function renderApplyQueueAvailability() {
+  setDisabledReason(
+    elements.applyQueueButton,
+    elements.applyQueueButtonHint,
+    applyQueueDisabledReason(),
+    elements.applyQueueReason
+  );
+}
+
+function startQueueDisabledReason({ hasPending, hasFailed, activeState }) {
+  if (activeState) return "현재 큐가 실행 중입니다.";
+  if (hasFailed) return "실패한 작업이 있습니다. ‘실패 작업 다시 실행’으로 처리한 뒤 시작하세요.";
+  if (hasPending) return "";
+  if (!state.jobs.length && !state.characters.length) return "작업 큐가 비어 있습니다. 위에서 프롬프트를 분석하고 ‘작업 큐에 적용’을 먼저 누르세요.";
+  if (state.status === "completed") return "모든 작업이 완료되었습니다. 새 프롬프트를 적용하거나 완료 체크를 해제하세요.";
+  return "실행할 대기 작업이 없습니다. 작업 목록에서 완료 상태를 확인하세요.";
+}
+
+function shortProjectId(value) {
+  const projectId = String(value || "");
+  return projectId.length > 16 ? `${projectId.slice(0, 8)}…${projectId.slice(-6)}` : projectId;
+}
+
+function renderProjectMemory() {
+  const project = currentFlowProject;
+  const saved = project?.savedProfile;
+  const active = Boolean(state.activeJobId) || ["running", "waiting", "pausing"].includes(state.status);
+  if (!project?.projectId) {
+    elements.projectMemoryStatus.textContent = "Flow 프로젝트를 확인하면 이전 캐릭터를 불러올 수 있습니다.";
+    elements.loadProjectCharactersButton.textContent = "프로젝트 확인 필요";
+    elements.loadProjectCharactersButton.disabled = true;
+    return;
+  }
+  const projectName = project.projectTitle || shortProjectId(project.projectId);
+  elements.projectMemoryStatus.textContent = saved
+    ? `${projectName} · 저장된 캐릭터 ${saved.characterCount}명${saved.registeredCount ? ` · 등록 확인 ${saved.registeredCount}명` : ""}`
+    : `${projectName} · 저장된 캐릭터 작업내역 없음`;
+  elements.loadProjectCharactersButton.textContent = saved ? "저장된 캐릭터 불러오기" : "Flow 등록 캐릭터 읽기";
+  elements.loadProjectCharactersButton.disabled = active;
 }
 
 function renderInputMode() {
@@ -246,27 +326,33 @@ function renderState() {
   const hasPending = state.jobs.some((job) => job.status === "pending") || state.characters.some((character) => character.status === "pending");
   const hasFailed = state.jobs.some((job) => job.status === "failed") || state.characters.some((character) => character.status === "failed");
   const activeState = ["running", "waiting", "pausing"].includes(state.status) || Boolean(state.activeJobId);
-  const manualWorkflow = state.executionMode === "manual";
-  elements.startButton.hidden = activeState || state.status === "paused" || manualWorkflow;
-  elements.startButton.disabled = !hasPending || activeState;
+  elements.startButton.hidden = activeState || state.status === "paused";
+  elements.startButtonHint.hidden = elements.startButton.hidden;
   elements.startButton.textContent = state.characters.some((character) => character.status === "pending")
     ? "캐릭터부터 생성 시작"
     : state.queueMode === "intro" ? "인트로·썸네일 생성 시작" : "장면 생성 시작";
+  const startReason = startQueueDisabledReason({ hasPending, hasFailed, activeState });
+  setDisabledReason(
+    elements.startButton,
+    elements.startButtonHint,
+    startReason,
+    elements.startButton.hidden ? null : elements.queueControlReason
+  );
+  if (elements.startButton.hidden) {
+    elements.queueControlReason.hidden = true;
+    elements.queueControlReason.textContent = "";
+  }
   elements.pauseButton.hidden = !["running", "waiting", "pausing"].includes(state.status);
   elements.pauseButton.disabled = state.status === "pausing";
   elements.pauseButton.textContent = state.activeJobId ? "현재 작업 후 중단" : "대기열 중단";
-  elements.resumeButton.hidden = state.status !== "paused" || hasFailed || manualWorkflow;
+  elements.resumeButton.hidden = state.status !== "paused" || hasFailed;
   elements.resumeButton.disabled = !hasPending || Boolean(state.activeJobId);
   elements.retryFailedButton.hidden = !hasFailed || Boolean(state.activeJobId);
   elements.retryFailedFooterButton.hidden = !hasFailed || Boolean(state.activeJobId);
   elements.retryFailedFooterButton.disabled = Boolean(state.activeJobId);
   elements.syncCharactersButton.disabled = activeState;
   elements.resetButton.disabled = !(state.jobs.length || state.characters.length) || Boolean(state.activeJobId);
-  elements.applyQueueButton.disabled = !analysis.prompts.length
-    || Boolean(analysis.unknownRefs?.length)
-    || (inputMode === "intro" && !knownCharacterKeys().length)
-    || Boolean(state.activeJobId)
-    || activeState;
+  renderApplyQueueAvailability();
   const hasDownloadSequence = state.jobs.length > 0 || state.characters.length > 0;
   elements.downloadProjectButton.disabled = !hasDownloadSequence || activeState || downloadBusy;
   elements.downloadProjectButton.innerHTML = downloadBusy
@@ -275,6 +361,7 @@ function renderState() {
 
   renderJobs();
   renderCharacters();
+  renderProjectMemory();
 }
 
 function renderAnalysis() {
@@ -295,9 +382,8 @@ function renderAnalysis() {
   elements.analysisWarning.hidden = !analysis.warnings.length;
   elements.analysisWarning.textContent = analysis.warnings.join(" ");
   elements.existingCharactersRow.hidden = intro || !(analysis.characters?.length);
-  const hasUnknownRefs = Boolean(analysis.unknownRefs?.length);
   elements.applyQueueButton.textContent = intro ? "인트로·썸네일 작업 큐에 적용" : "분석 결과를 작업 큐에 적용";
-  elements.applyQueueButton.disabled = !hasPrompts || hasUnknownRefs || (intro && !hasReusableCharacters) || Boolean(state.activeJobId) || ["running", "waiting", "pausing"].includes(state.status);
+  renderApplyQueueAvailability();
 
   if (!hasPrompts) {
     elements.previewList.innerHTML = "";
@@ -392,15 +478,17 @@ async function retryAndResume(type, payload = {}) {
   await startOrResume("RESUME_QUEUE");
 }
 
-async function checkFlow() {
+async function checkFlow({ notify = true } = {}) {
   elements.connectionLabel.textContent = "확인 중";
   const result = await send("CHECK_FLOW");
   setConnected(Boolean(result.connected), result.connected ? "Flow 연결됨" : "연결 안 됨");
-  if (result.connected) {
-    showToast("Flow 프로젝트와 연결되었습니다.");
-  } else {
-    showToast(result.error || "Flow 프로젝트 탭을 열어 주세요.");
-  }
+  currentFlowProject = result.project || null;
+  renderProjectMemory();
+  if (!notify) return result;
+  if (!result.connected) showToast(result.error || "Flow 프로젝트 탭을 열어 주세요.");
+  else if (result.project?.savedProfile) showToast(`Flow 프로젝트와 연결되었습니다. 저장된 캐릭터 ${result.project.savedProfile.characterCount}명을 불러올 수 있습니다.`);
+  else showToast("Flow 프로젝트와 연결되었습니다. 캐릭터 작업은 이 프로젝트 ID에 자동 보관됩니다.");
+  return result;
 }
 
 function withUiError(operation) {
@@ -471,6 +559,18 @@ elements.resetButton.addEventListener("click", withUiError(async () => {
 }));
 elements.openFlowButton.addEventListener("click", withUiError(() => send("OPEN_FLOW")));
 elements.checkFlowButton.addEventListener("click", withUiError(checkFlow));
+elements.loadProjectCharactersButton.addEventListener("click", withUiError(async () => {
+  const result = await send("LOAD_PROJECT_CHARACTERS");
+  state = result.state;
+  currentFlowProject = {
+    projectId: result.profile?.projectId || state.flowProjectId,
+    projectTitle: result.profile?.projectTitle || state.flowProjectTitle,
+    savedProfile: result.profile || null
+  };
+  analyzeSource();
+  renderState();
+  showToast(`${result.importedFromFlow ? "Flow에서" : "저장된 작업내역에서"} 캐릭터 ${result.profile?.characterCount || state.characters.length}명을 불러왔고, Flow 등록 ${result.matchedKeys.length}명을 확인했습니다.`);
+}));
 elements.syncCharactersButton.addEventListener("click", withUiError(async () => {
   const result = await send("SYNC_FLOW_STATE");
   state = result.state;
@@ -610,6 +710,7 @@ async function initialize() {
     : analyzePrompts(sceneSource, { mode: "scene", knownCharacterKeys: knownCharacterKeys() });
   renderAnalysis();
   renderState();
+  await checkFlow({ notify: false }).catch(() => {});
 }
 
 withUiError(initialize)();

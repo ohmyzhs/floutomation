@@ -100,7 +100,10 @@
           </div>
           <p id="analysisWarning" class="analysis-warning" hidden></p>
           <div id="previewList" class="preview-list"></div>
-          <button id="applyQueueButton" class="secondary-button full-width" type="button" disabled>분석 결과를 작업 큐에 적용</button>
+          <span id="applyQueueButtonHint" class="button-hint full-width">
+            <button id="applyQueueButton" class="secondary-button full-width" type="button" disabled>분석 결과를 작업 큐에 적용</button>
+          </span>
+          <p id="applyQueueReason" class="disabled-reason" role="status" hidden></p>
         </section>
 
         <section class="panel-card compact-card" aria-labelledby="settingsTitle">
@@ -138,6 +141,13 @@
               <small>선택하면 5명 생성을 건너뛰고 @이름 매핑만 검증합니다</small>
             </span>
           </label>
+          <div id="projectMemoryBox" class="project-memory-box">
+            <div>
+              <strong>프로젝트 캐릭터 보관함</strong>
+              <small id="projectMemoryStatus">Flow 프로젝트를 확인하면 이전 캐릭터를 불러올 수 있습니다.</small>
+            </div>
+            <button id="loadProjectCharactersButton" class="project-memory-button" type="button" disabled>저장된 캐릭터 불러오기</button>
+          </div>
           <p class="safety-note">고정 간격으로 한 작업씩 실행합니다. 계정 확인이나 CAPTCHA가 표시되면 자동으로 멈춥니다.</p>
         </section>
 
@@ -178,12 +188,17 @@
       </main>
 
       <footer class="control-dock">
-        <button id="openFlowButton" class="icon-button" type="button" title="Flow 열기" aria-label="Flow 열기">↗</button>
-        <button id="startButton" class="primary-button grow" type="button" disabled>생성 시작</button>
-        <button id="pauseButton" class="danger-button grow" type="button" hidden>현재 작업 후 중단</button>
-        <button id="resumeButton" class="primary-button grow" type="button" hidden>이어서 실행</button>
-        <button id="retryFailedFooterButton" class="danger-button grow" type="button" hidden>실패 작업 다시 실행</button>
-        <button id="resetButton" class="icon-button" type="button" title="큐 초기화" aria-label="큐 초기화" disabled>↺</button>
+        <p id="queueControlReason" class="dock-disabled-reason" role="status" hidden></p>
+        <div class="control-dock-row">
+          <button id="openFlowButton" class="icon-button" type="button" title="Flow 열기" aria-label="Flow 열기">↗</button>
+          <span id="startButtonHint" class="button-hint grow">
+            <button id="startButton" class="primary-button full-width" type="button" disabled>생성 시작</button>
+          </span>
+          <button id="pauseButton" class="danger-button grow" type="button" hidden>현재 작업 후 중단</button>
+          <button id="resumeButton" class="primary-button grow" type="button" hidden>이어서 실행</button>
+          <button id="retryFailedFooterButton" class="danger-button grow" type="button" hidden>실패 작업 다시 실행</button>
+          <button id="resetButton" class="icon-button" type="button" title="큐 초기화" aria-label="큐 초기화" disabled>↺</button>
+        </div>
       </footer>
       <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
     </div>

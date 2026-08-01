@@ -39,6 +39,10 @@ const manualPromptStart = contentSource.indexOf("async function prepareManualSce
 const manualPromptEnd = contentSource.indexOf("function currentProjectTitle", manualPromptStart);
 const manualPromptSource = contentSource.slice(manualPromptStart, manualPromptEnd);
 
+const discoveryStart = contentSource.indexOf("function discoverRegisteredCharacterKeys");
+const discoveryEnd = contentSource.indexOf("async function setFormControlValue", discoveryStart);
+const discoverySource = contentSource.slice(discoveryStart, discoveryEnd);
+
 test("the general image prompt cannot be mistaken for the character description input", () => {
   assert.match(creatorInputSource, /캐릭터\.\*설명\|describe\.\*character/);
   assert.doesNotMatch(creatorInputSource, /candidates\.length\s*===\s*1/);
@@ -109,4 +113,10 @@ test("manual scene preparation binds the prompt but never submits or monitors ge
   assert.match(manualPromptSource, /ensureDirectImageSettings\(input, options\.model\)/);
   assert.match(manualPromptSource, /setPromptWithCharacterReferences\(input, job\.prompt, job\.characterRefs \|\| \[\]\)/);
   assert.doesNotMatch(manualPromptSource, /findSubmitButton|clickTrusted\(submitButton\)|monitorGeneration/);
+});
+
+test("an older Flow project can recover registered @keys without a saved queue", () => {
+  assert.match(discoverySource, /a\[href\*="\/character\/"\]/);
+  assert.match(contentSource, /DISCOVER_FLOW_CHARACTERS/);
+  assert.match(discoverySource, /@\(\[A-Za-z\]/);
 });
