@@ -39,6 +39,10 @@ const manualPromptStart = contentSource.indexOf("async function prepareManualSce
 const manualPromptEnd = contentSource.indexOf("function currentProjectTitle", manualPromptStart);
 const manualPromptSource = contentSource.slice(manualPromptStart, manualPromptEnd);
 
+const projectTitleStart = contentSource.indexOf("function currentProjectTitle");
+const projectTitleEnd = contentSource.indexOf("function sceneMediaCardAssets", projectTitleStart);
+const projectTitleSource = contentSource.slice(projectTitleStart, projectTitleEnd);
+
 const discoveryStart = contentSource.indexOf("function discoverRegisteredCharacterKeys");
 const discoveryEnd = contentSource.indexOf("async function setFormControlValue", discoveryStart);
 const discoverySource = contentSource.slice(discoveryStart, discoveryEnd);
@@ -61,7 +65,7 @@ test("the selected model is matched exactly across all three Flow image models",
   assert.match(modelSelectionSource, /canonicalFlowModel/);
   assert.match(modelSelectionSource, /ensureDirectImageModel\(section, requestedModel\)/);
   assert.match(contentSource, /ensureCharacterModel\(options\.model\)/);
-  assert.match(contentSource, /ensureDirectImageSettings\(input, options\.model\)/);
+  assert.match(contentSource, /ensureDirectImageSettings\(input, options\.model, options\.aspectRatio, options\.imagesPerPrompt\)/);
 });
 
 test("character registration monitoring responds to a requested stop", () => {
@@ -75,6 +79,21 @@ test("Flow daily-limit failure cards are inspected as generation errors", () => 
   assert.match(failureCardsSource, /querySelectorAll\("button"\)/);
   assert.match(failureCardsSource, /일일\\s\*한도/);
   assert.match(failureCardsSource, /baselineFailureCount/);
+});
+
+test("guardrail failures are surfaced as retryable generation errors", () => {
+  assert.match(failureCardsSource, /가이드라인|guideline|moderation|unsafe|blocked/);
+  assert.match(contentSource, /안전|policy|violat/);
+});
+
+test("scene monitoring stops promptly when the queue stop signal arrives", () => {
+  assert.match(monitorSource, /if \(pauseRequested\)/);
+  assert.match(monitorSource, /paused: true/);
+});
+
+test("hidden Flow pages can use structural controls without viewport geometry", () => {
+  assert.match(contentSource, /document\.visibilityState === "hidden"/);
+  assert.match(contentSource, /element\.click\(\)/);
 });
 
 test("a scene cannot complete without every requested downloadable image", () => {
@@ -110,9 +129,14 @@ test("repeated @character mentions produce one Flow reference chip and keep late
 
 test("manual scene preparation binds the prompt but never submits or monitors generation", () => {
   assert.match(manualPromptSource, /enterDirectMediaWorkspace\(\)/);
-  assert.match(manualPromptSource, /ensureDirectImageSettings\(input, options\.model\)/);
+  assert.match(manualPromptSource, /ensureDirectImageSettings\(input, options\.model, options\.aspectRatio, options\.imagesPerPrompt\)/);
   assert.match(manualPromptSource, /setPromptWithCharacterReferences\(input, job\.prompt, job\.characterRefs \|\| \[\]\)/);
   assert.doesNotMatch(manualPromptSource, /findSubmitButton|clickTrusted\(submitButton\)|monitorGeneration/);
+});
+
+test("project downloads prefer Flow's editable project title", () => {
+  assert.match(projectTitleSource, /input\[aria-label="수정 가능한 텍스트"\]/);
+  assert.match(projectTitleSource, /if \(editableTitle\) return editableTitle/);
 });
 
 test("an older Flow project can recover registered @keys without a saved queue", () => {

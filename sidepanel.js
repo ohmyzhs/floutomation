@@ -1,18 +1,17 @@
-import { analyzeIntroAssets, analyzePrompts, formatLabel } from "./lib/prompt-parser.js";
-import { MIN_DELAY_MS, createInitialState, hydrateState, summarizeState } from "./lib/queue-state.js";
+import { analyzeIntroAssets, analyzePrompts } from "./lib/prompt-parser.js";
+import { MAX_DELAY_MS, MIN_DELAY_MS, createInitialState, hydrateState, summarizeState } from "./lib/queue-state.js";
 
 const elements = Object.fromEntries(
   [
-    "checkFlowButton", "connectionDot", "connectionLabel", "queueStatusTitle", "statusBadge",
+    "openFlowButton", "checkFlowButton", "connectionDot", "connectionLabel", "queueStatusTitle", "statusBadge",
     "overallProgressBar", "completedStat", "imageStat", "characterStat", "remainingStat", "countdownRow",
-    "countdownText", "errorBanner", "fileInput", "dropZone", "promptSource", "clearSourceButton", "sceneModeButton", "introModeButton", "modeDescription",
+    "countdownText", "errorBanner", "fileInput", "dropZone", "promptSource", "sceneModeButton", "introModeButton", "modeDescription",
     "sourceSubtitle", "dropZoneAction", "dropZoneRest", "dropZoneHint", "introFileStatus", "sourceOrDivider", "promptSourceLabel",
-    "analysisSummary", "detectedJobCount", "detectedImageCount", "detectedCharacterCount", "detectedFormat", "analysisWarning",
-    "previewList", "applyQueueButton", "applyQueueButtonHint", "applyQueueReason", "modelSelect", "delaySeconds", "existingCharactersRow", "charactersAlreadyRegistered",
-    "projectMemoryBox", "projectMemoryStatus", "loadProjectCharactersButton",
+    "analysisSummary", "detectedJobCount", "detectedImageCount", "detectedCharacterCount", "analysisWarning",
+    "applyQueueButton", "applyQueueButtonHint", "applyQueueReason", "modelSelect", "aspectRatioSelect", "imageCountSelect", "delayRange", "delayValue", "delayValueLabel", "randomDelayToggle", "randomDelayDescription",
     "characterSection", "characterListCaption", "characterList", "syncCharactersButton", "jobListCaption", "jobList", "retryFailedButton",
     "downloadProjectButton", "downloadProgress", "downloadProgressBar", "downloadStatus",
-    "openFlowButton", "startButton", "startButtonHint", "pauseButton", "resumeButton", "retryFailedFooterButton", "resetButton", "queueControlReason", "toast"
+    "startButton", "startButtonHint", "pauseButton", "resumeButton", "retryFailedFooterButton", "resetButton", "queueControlReason", "toast"
   ].map((id) => [id, document.getElementById(id)])
 );
 
@@ -26,7 +25,14 @@ let introFileName = "";
 let toastTimer = null;
 let sourceSaveTimer = null;
 let downloadBusy = false;
-let currentFlowProject = null;
+let flowCheckInFlight = false;
+
+const PROMPT_DRAFT_KEYS = [
+  "flowBatchPromptDraft",
+  "flowBatchIntroDraft",
+  "flowBatchThumbnailDraft",
+  "flowBatchIntroFileName"
+];
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -84,10 +90,10 @@ function applyQueueDisabledReason() {
   if (active) return "현재 큐가 실행 중입니다. 현재 작업을 중단하거나 완료한 뒤 새 작업을 적용하세요.";
   const unknownKeys = uniqueUnknownCharacterKeys();
   if (unknownKeys.length) {
-    return `현재 Flow 프로젝트에 준비된 캐릭터가 아닙니다: ${unknownKeys.map((key) => `@${key}`).join(", ")}. 생성 규칙에서 ‘저장된 캐릭터 불러오기’ 또는 ‘Flow 등록 캐릭터 읽기’를 먼저 실행하세요.`;
+    return `현재 Flow 프로젝트에 준비된 캐릭터가 아닙니다: ${unknownKeys.map((key) => `@${key}`).join(", ")}. 캐릭터 섹션의 ‘Flow와 동기화’를 먼저 실행하세요.`;
   }
   if (inputMode === "intro" && !knownCharacterKeys().length) {
-    return "인트로·썸네일에는 현재 Flow 프로젝트의 캐릭터가 필요합니다. 생성 규칙에서 프로젝트 캐릭터를 먼저 불러오세요.";
+    return "인트로·썸네일에는 현재 Flow 프로젝트의 캐릭터가 필요합니다. 캐릭터 섹션의 ‘Flow와 동기화’를 먼저 실행하세요.";
   }
   if (!analysis.prompts.length) {
     return inputMode === "intro"
@@ -115,29 +121,6 @@ function startQueueDisabledReason({ hasPending, hasFailed, activeState }) {
   return "실행할 대기 작업이 없습니다. 작업 목록에서 완료 상태를 확인하세요.";
 }
 
-function shortProjectId(value) {
-  const projectId = String(value || "");
-  return projectId.length > 16 ? `${projectId.slice(0, 8)}…${projectId.slice(-6)}` : projectId;
-}
-
-function renderProjectMemory() {
-  const project = currentFlowProject;
-  const saved = project?.savedProfile;
-  const active = Boolean(state.activeJobId) || ["running", "waiting", "pausing"].includes(state.status);
-  if (!project?.projectId) {
-    elements.projectMemoryStatus.textContent = "Flow 프로젝트를 확인하면 이전 캐릭터를 불러올 수 있습니다.";
-    elements.loadProjectCharactersButton.textContent = "프로젝트 확인 필요";
-    elements.loadProjectCharactersButton.disabled = true;
-    return;
-  }
-  const projectName = project.projectTitle || shortProjectId(project.projectId);
-  elements.projectMemoryStatus.textContent = saved
-    ? `${projectName} · 저장된 캐릭터 ${saved.characterCount}명${saved.registeredCount ? ` · 등록 확인 ${saved.registeredCount}명` : ""}`
-    : `${projectName} · 저장된 캐릭터 작업내역 없음`;
-  elements.loadProjectCharactersButton.textContent = saved ? "저장된 캐릭터 불러오기" : "Flow 등록 캐릭터 읽기";
-  elements.loadProjectCharactersButton.disabled = active;
-}
-
 function renderInputMode() {
   const intro = inputMode === "intro";
   elements.sceneModeButton.setAttribute("aria-selected", String(!intro));
@@ -145,10 +128,10 @@ function renderInputMode() {
   elements.modeDescription.textContent = intro
     ? "인트로는 파일의 [A] 이미지 프롬프트만, 썸네일은 아래 텍스트 한 건만 사용합니다. 둘 다 현재 프로젝트의 캐릭터를 연결합니다."
     : "장면용 프롬프트 파일을 분석해 캐릭터 생성과 장면 생성을 순서대로 진행합니다.";
-  elements.sourceSubtitle.textContent = intro ? "인트로 파일 + 썸네일 텍스트" : "Markdown 파일 또는 텍스트";
-  elements.dropZoneAction.textContent = intro ? "인트로훅 파일 선택" : "파일을 선택";
+  elements.sourceSubtitle.textContent = intro ? "인트로 파일 + 썸네일 텍스트" : "Flow_Prompts 파일 또는 텍스트";
+  elements.dropZoneAction.textContent = intro ? "인트로훅 파일 선택" : "Flow_Prompts 파일을 선택";
   elements.dropZoneRest.textContent = "하거나 여기에 놓으세요";
-  elements.dropZoneHint.textContent = intro ? ".txt · .md · [A] 이미지 프롬프트만 추출" : ".md · .txt";
+  elements.dropZoneHint.textContent = intro ? ".txt · .md · [A] 이미지 프롬프트만 추출" : ".md · .txt · 장면과 캐릭터를 자동 분석";
   elements.introFileStatus.hidden = !intro || !introFileName;
   elements.introFileStatus.textContent = introFileName ? `선택한 인트로 파일: ${introFileName}` : "";
   elements.sourceOrDivider.hidden = intro;
@@ -172,7 +155,7 @@ const statusMeta = {
   running: ["이미지 생성 중", "실행 중", "status-running"],
   configuring: ["Flow 설정 확인 중", "설정 중", "status-running"],
   waiting: ["다음 작업 대기", "간격 대기", "status-waiting"],
-  pausing: ["현재 작업 마무리 중", "중단 예약", "status-waiting"],
+  pausing: ["대기열 중단 중", "중단 처리", "status-waiting"],
   paused: ["작업이 중단됨", "중단", "status-error"],
   completed: ["모든 작업 완료", "완료", "status-completed"]
 };
@@ -186,7 +169,8 @@ function renderJobs() {
 
   const hasPreviousScenes = state.queueMode === "intro" && state.jobs.some((job) => !["intro", "thumbnail"].includes(job.sourceMode));
   const jobLabel = hasPreviousScenes ? "장면 + 인트로" : state.queueMode === "intro" ? "인트로" : "장면";
-  elements.jobListCaption.textContent = `${jobLabel} ${state.jobs.length}개 작업 · ${state.jobs.length * state.options.imagesPerPrompt}장 예정`;
+  const characterSummary = state.characters.length ? ` · 캐릭터 ${state.characters.length}개 별도` : "";
+  elements.jobListCaption.textContent = `${jobLabel} ${state.jobs.length}개 작업 · ${state.jobs.length * state.options.imagesPerPrompt}장 예정${characterSummary}`;
   const canRemove = !state.activeJobId && !["running", "waiting", "pausing"].includes(state.status);
   const labels = {
     pending: "대기",
@@ -197,49 +181,58 @@ function renderJobs() {
     failed: "실패"
   };
 
-  elements.jobList.innerHTML = state.jobs.map((job, index) => `
-    <article class="job-item ${escapeHtml(job.status)}">
-      <div class="job-row">
-        <span class="job-number">${String(index + 1).padStart(2, "0")}</span>
-        <div class="job-copy" title="${escapeHtml(job.prompt)}">
-          <div class="job-title">${escapeHtml(job.title)}</div>
-          <div class="job-stage">${escapeHtml(job.stage || "대기 중")}</div>
-        </div>
-        <div class="job-status-controls">
-          <label class="character-ready-toggle" title="체크하면 이 장면 작업을 완료로 처리하고 건너뜁니다">
-            <input type="checkbox" data-job-ready="${escapeHtml(job.id)}" aria-label="${index + 1}번 장면 완료로 지정" ${job.status === "completed" ? "checked" : ""} ${state.activeJobId || ["running", "waiting", "pausing"].includes(state.status) ? "disabled" : ""} />
-            <span aria-hidden="true">✓</span>
-          </label>
+  elements.jobList.innerHTML = state.jobs.map((job, index) => {
+    const firstDetailUrl = job.status === "completed"
+      ? job.resultAssets?.find((asset) => asset?.detailUrl)?.detailUrl || ""
+      : "";
+    const canUseManual = !state.activeJobId && !["running", "waiting", "pausing", "completed"].includes(job.status);
+    return `
+      <article class="job-item ${escapeHtml(job.status)}">
+        <div class="job-row">
+          <span class="job-number">${String(index + 1).padStart(2, "0")}</span>
+          <div class="job-copy" title="${escapeHtml(job.prompt)}">
+            <div class="job-title">${escapeHtml(job.title)}</div>
+            <div class="job-stage">${escapeHtml(job.stage || "대기 중")}</div>
+          </div>
           <span class="job-badge">${labels[job.status] || escapeHtml(job.status)}</span>
-          ${canRemove && job.status !== "completed" ? `<button class="remove-job" data-remove-job="${escapeHtml(job.id)}" type="button" aria-label="${index + 1}번 작업 삭제">×</button>` : ""}
         </div>
-      </div>
-      <div class="job-progress"><span style="width:${Math.max(0, Math.min(100, Number(job.progress || 0)))}%"></span></div>
-      ${job.status === "generating" && Array.isArray(job.generationPercentages) && job.generationPercentages.length
-        ? `<div class="job-image-progress" aria-label="생성 이미지별 진행률">${job.generationPercentages.map((percentage, imageIndex) => `<span>이미지 ${imageIndex + 1} <strong>${Math.max(0, Math.min(100, Number(percentage || 0)))}%</strong></span>`).join("")}</div>`
-        : ""}
-      ${job.status === "pending" && job.lastTransientError
-        ? `<p class="job-retry-note">${escapeHtml(job.lastTransientError)}</p>`
-        : ""}
-      ${job.status === "manual"
-        ? `<p class="job-manual-note">Flow에서 직접 생성한 뒤 결과를 확인하고 완료 처리하세요.</p>`
-        : ""}
-      ${!state.activeJobId && !["running", "waiting", "pausing", "completed"].includes(job.status)
-        ? `<div class="job-manual-actions">
-            <button class="job-manual-button" data-prepare-manual-job="${escapeHtml(job.id)}" type="button">수동 프롬프트 보내기</button>
-            ${job.status === "manual" ? `<button class="job-complete-button" data-complete-manual-job="${escapeHtml(job.id)}" type="button">생성 완료 처리</button>` : ""}
-          </div>`
-        : ""}
-      ${job.error ? `<p class="job-error">${escapeHtml(job.error)}</p>` : ""}
-    </article>
-  `).join("");
+        <div class="job-progress"><span style="width:${Math.max(0, Math.min(100, Number(job.progress || 0)))}%"></span></div>
+        ${job.status === "generating" && Array.isArray(job.generationPercentages) && job.generationPercentages.length
+          ? `<div class="job-image-progress" aria-label="생성 이미지별 진행률">${job.generationPercentages.map((percentage, imageIndex) => `<span>이미지 ${imageIndex + 1} <strong>${Math.max(0, Math.min(100, Number(percentage || 0)))}%</strong></span>`).join("")}</div>`
+          : ""}
+        <div class="job-action-groups">
+          <div class="job-action-group job-work-actions" aria-label="작업 기능">
+            <button class="job-action-button" data-copy-prompt="${escapeHtml(job.id)}" type="button" aria-label="${index + 1}번 프롬프트 복사">복사</button>
+            ${firstDetailUrl ? `<button class="job-action-button" data-open-asset="${escapeHtml(firstDetailUrl)}" type="button" aria-label="${index + 1}번 결과 상세보기">보러가기</button>` : ""}
+            ${canUseManual ? `<button class="job-action-button job-manual-button" data-prepare-manual-job="${escapeHtml(job.id)}" type="button">수동 프롬프트 보내기</button>` : ""}
+          </div>
+          <div class="job-action-group job-state-controls" aria-label="상태 제어">
+            <label class="job-ready-control" title="체크하면 이 장면 작업을 완료로 처리하고 건너뜁니다">
+              <input type="checkbox" data-job-ready="${escapeHtml(job.id)}" aria-label="${index + 1}번 장면 완료로 지정" ${job.status === "completed" ? "checked" : ""} ${state.activeJobId || ["running", "waiting", "pausing"].includes(state.status) ? "disabled" : ""} />
+              <span aria-hidden="true">✓</span>
+            </label>
+            ${canRemove && job.status !== "completed" ? `<button class="remove-job" data-remove-job="${escapeHtml(job.id)}" type="button" aria-label="${index + 1}번 작업 삭제">×</button>` : ""}
+            ${job.status === "manual" && canUseManual ? `<button class="job-complete-button" data-complete-manual-job="${escapeHtml(job.id)}" type="button">생성 완료 처리</button>` : ""}
+          </div>
+        </div>
+        ${job.status === "pending" && job.lastTransientError
+          ? `<p class="job-retry-note">${escapeHtml(job.lastTransientError)}</p>`
+          : ""}
+        ${job.status === "manual"
+          ? `<p class="job-manual-note">Flow에서 직접 생성한 뒤 결과를 확인하고 완료 처리하세요.</p>`
+          : ""}
+        ${job.error ? `<p class="job-error">${escapeHtml(job.error)}</p>` : ""}
+      </article>
+    `;
+  }).join("");
 }
 
 function renderCharacters() {
   const characters = state.characters || [];
-  elements.characterSection.hidden = !characters.length;
+  elements.characterSection.hidden = !characters.length && inputMode !== "intro";
   if (!characters.length) {
-    elements.characterList.innerHTML = "";
+    elements.characterList.innerHTML = '<div class="empty-state compact-empty"><span>↔</span><p>Flow와 동기화하면<br />등록된 캐릭터를 읽습니다.</p></div>';
+    elements.characterListCaption.textContent = "Flow 등록 캐릭터를 읽어 인트로·썸네일에 연결합니다";
     return;
   }
 
@@ -296,8 +289,8 @@ function renderState() {
     meta[0] = "자동 복구 재시도 대기";
     meta[1] = `재시도 ${retryingJob.autoRetryCount}`;
   }
-  const totalTasks = summary.total + summary.charactersTotal;
-  const completedTasks = summary.completed + summary.charactersCompleted;
+  const totalTasks = summary.totalTasks;
+  const completedTasks = summary.completedTasks;
   const refinedPercent = totalTasks
     ? Math.round(((completedTasks + (active ? Number(active.progress || 0) / 100 : 0)) / totalTasks) * 100)
     : 0;
@@ -306,15 +299,29 @@ function renderState() {
   elements.statusBadge.textContent = meta[1];
   elements.statusBadge.className = `status-badge ${meta[2]}`;
   elements.overallProgressBar.style.width = `${Math.min(100, refinedPercent)}%`;
-  elements.completedStat.textContent = String(summary.completed);
+  elements.completedStat.textContent = String(summary.completedTasks);
   elements.imageStat.textContent = String(summary.generatedImages);
   elements.characterStat.textContent = `${summary.charactersCompleted}/${summary.charactersTotal}`;
-  elements.remainingStat.textContent = String(Math.max(0, totalTasks - completedTasks));
-  elements.delaySeconds.value = String(Math.max(60, Math.round(state.options.delayMs / 1000)));
-  elements.delaySeconds.disabled = Boolean(state.activeJobId);
+  elements.remainingStat.textContent = String(summary.remainingTasks);
+  const delaySeconds = Math.round(state.options.delayMs / 1000);
+  elements.delayRange.value = String(delaySeconds);
+  elements.delayRange.disabled = Boolean(state.activeJobId) || Boolean(state.options.randomDelay);
+  elements.delayValue.value = `${delaySeconds}초`;
+  elements.delayValue.textContent = `${delaySeconds}초`;
+  elements.delayValueLabel.textContent = state.options.randomDelay ? "60~90초 사이 랜덤으로 대기합니다" : `${delaySeconds}초`;
+  elements.randomDelayDescription.textContent = state.options.randomDelay
+    ? "고정 시간 대신 매 작업마다 60~90초 사이 랜덤"
+    : "고정 대기시간을 사용합니다";
+  elements.randomDelayToggle.checked = Boolean(state.options.randomDelay);
+  elements.randomDelayToggle.disabled = Boolean(state.activeJobId);
   elements.modelSelect.value = state.options.model;
   elements.modelSelect.disabled = Boolean(state.activeJobId);
-  setConnected(Boolean(state.flowConnected), state.flowConnected ? "Flow 연결됨" : "연결 확인");
+  elements.aspectRatioSelect.value = state.options.aspectRatio;
+  elements.aspectRatioSelect.disabled = Boolean(state.activeJobId);
+  elements.imageCountSelect.value = String(state.options.imagesPerPrompt);
+  elements.imageCountSelect.disabled = Boolean(state.activeJobId);
+  setConnected(Boolean(state.flowConnected), state.flowConnected ? "Flow 연결됨" : "연결 안 됨");
+  elements.openFlowButton.hidden = Boolean(state.flowConnected);
 
   const waiting = state.status === "waiting" && state.nextRunAt;
   elements.countdownRow.hidden = !waiting;
@@ -325,6 +332,13 @@ function renderState() {
 
   const hasPending = state.jobs.some((job) => job.status === "pending") || state.characters.some((character) => character.status === "pending");
   const hasFailed = state.jobs.some((job) => job.status === "failed") || state.characters.some((character) => character.status === "failed");
+  if (state.status === "completed" && hasFailed) {
+    const failedCount = state.jobs.filter((job) => job.status === "failed").length
+      + state.characters.filter((character) => character.status === "failed").length;
+    meta[0] = "작업 완료 · 실패 있음";
+    meta[1] = `실패 ${failedCount}개`;
+    meta[2] = "status-error";
+  }
   const activeState = ["running", "waiting", "pausing"].includes(state.status) || Boolean(state.activeJobId);
   elements.startButton.hidden = activeState || state.status === "paused";
   elements.startButtonHint.hidden = elements.startButton.hidden;
@@ -344,7 +358,7 @@ function renderState() {
   }
   elements.pauseButton.hidden = !["running", "waiting", "pausing"].includes(state.status);
   elements.pauseButton.disabled = state.status === "pausing";
-  elements.pauseButton.textContent = state.activeJobId ? "현재 작업 후 중단" : "대기열 중단";
+  elements.pauseButton.textContent = "대기열 중단";
   elements.resumeButton.hidden = state.status !== "paused" || hasFailed;
   elements.resumeButton.disabled = !hasPending || Boolean(state.activeJobId);
   elements.retryFailedButton.hidden = !hasFailed || Boolean(state.activeJobId);
@@ -356,47 +370,32 @@ function renderState() {
   const hasDownloadSequence = state.jobs.length > 0 || state.characters.length > 0;
   elements.downloadProjectButton.disabled = !hasDownloadSequence || activeState || downloadBusy;
   elements.downloadProjectButton.innerHTML = downloadBusy
-    ? '<span aria-hidden="true">…</span> ZIP 준비 중'
-    : '<span aria-hidden="true">⇩</span> 프로젝트 ZIP 다운로드';
+    ? '<span aria-hidden="true">…</span><span class="download-button-label">ZIP 준비 중</span>'
+    : '<span aria-hidden="true">⇩</span><span class="download-button-label">전체 다운로드</span>';
 
   renderJobs();
   renderCharacters();
-  renderProjectMemory();
 }
 
 function renderAnalysis() {
   const hasPrompts = analysis.prompts.length > 0;
   const intro = inputMode === "intro";
-  const hasReusableCharacters = knownCharacterKeys().length > 0;
   const introCount = analysis.prompts.filter((prompt) => prompt.sourceMode === "intro").length;
   const thumbnailCount = analysis.prompts.filter((prompt) => prompt.sourceMode === "thumbnail").length;
+  const characterCount = intro ? knownCharacterKeys().length : analysis.characters?.length || 0;
+  const taskCount = intro ? analysis.prompts.length : characterCount + analysis.prompts.length;
   elements.analysisSummary.hidden = !hasPrompts;
-  elements.detectedJobCount.textContent = intro
-    ? [introCount ? `인트로 ${introCount}개` : "", thumbnailCount ? `썸네일 ${thumbnailCount}개` : ""].filter(Boolean).join(" · ")
-    : `${analysis.prompts.length}개 작업`;
-  elements.detectedImageCount.textContent = `${intro ? "인트로·썸네일" : "장면"} ${analysis.totalImages}장`;
+  elements.detectedJobCount.textContent = `${taskCount}개 작업`;
   elements.detectedCharacterCount.textContent = intro
-    ? (hasReusableCharacters ? `기존 캐릭터 ${knownCharacterKeys().length}명 연결` : "기존 캐릭터 없음")
-    : (analysis.characters?.length ? `캐릭터 ${analysis.characters.length}명` : "");
-  elements.detectedFormat.textContent = formatLabel(analysis.format);
+    ? `- 기존 캐릭터 ${characterCount}명 /`
+    : `- 캐릭터 ${characterCount}명 /`;
+  elements.detectedImageCount.textContent = intro
+    ? `인트로 ${introCount}장 · 썸네일 ${thumbnailCount}장`
+    : `장면 ${analysis.prompts.length}장`;
   elements.analysisWarning.hidden = !analysis.warnings.length;
   elements.analysisWarning.textContent = analysis.warnings.join(" ");
-  elements.existingCharactersRow.hidden = intro || !(analysis.characters?.length);
   elements.applyQueueButton.textContent = intro ? "인트로·썸네일 작업 큐에 적용" : "분석 결과를 작업 큐에 적용";
   renderApplyQueueAvailability();
-
-  if (!hasPrompts) {
-    elements.previewList.innerHTML = "";
-    return;
-  }
-  const visiblePrompts = analysis.prompts.slice(0, 8);
-  elements.previewList.innerHTML = visiblePrompts.map((item, index) => `
-    <div class="preview-item" title="${escapeHtml(item.prompt)}">
-      <span class="preview-index">${String(index + 1).padStart(2, "0")}</span>
-      <span class="preview-title">${escapeHtml(item.title)}</span>
-      <span class="preview-count">2장</span>
-    </div>
-  `).join("") + (analysis.prompts.length > 8 ? `<div class="preview-more">외 ${analysis.prompts.length - 8}개 작업</div>` : "");
 }
 
 function analyzeSource() {
@@ -438,12 +437,10 @@ async function readFile(file) {
 
 async function applyQueue() {
   if (!analysis.prompts.length) return;
-  const delayMs = Math.max(MIN_DELAY_MS, Number(elements.delaySeconds.value || 60) * 1000);
-  await send("UPDATE_OPTIONS", { options: { delayMs, model: elements.modelSelect.value } });
+  await send("UPDATE_OPTIONS", { options: optionsFromControls() });
   state = await send("SET_QUEUE", {
     prompts: analysis.prompts,
     characters: analysis.characters || [],
-    charactersAlreadyRegistered: elements.charactersAlreadyRegistered.checked,
     queueMode: inputMode,
     reuseExistingCharacters: inputMode === "intro"
   });
@@ -466,10 +463,20 @@ async function applyQueue() {
 }
 
 async function startOrResume(type) {
-  const delayMs = Math.max(MIN_DELAY_MS, Number(elements.delaySeconds.value || 60) * 1000);
-  await send("UPDATE_OPTIONS", { options: { delayMs, model: elements.modelSelect.value } });
+  await send("UPDATE_OPTIONS", { options: optionsFromControls() });
   state = await send(type);
   renderState();
+}
+
+function optionsFromControls() {
+  const seconds = Math.min(MAX_DELAY_MS / 1_000, Math.max(MIN_DELAY_MS / 1_000, Number(elements.delayRange.value || 60)));
+  return {
+    delayMs: seconds * 1_000,
+    model: elements.modelSelect.value,
+    aspectRatio: elements.aspectRatioSelect.value,
+    imagesPerPrompt: Number(elements.imageCountSelect.value || 2),
+    randomDelay: elements.randomDelayToggle.checked
+  };
 }
 
 async function retryAndResume(type, payload = {}) {
@@ -479,16 +486,37 @@ async function retryAndResume(type, payload = {}) {
 }
 
 async function checkFlow({ notify = true } = {}) {
+  if (flowCheckInFlight) return null;
+  flowCheckInFlight = true;
   elements.connectionLabel.textContent = "확인 중";
-  const result = await send("CHECK_FLOW");
-  setConnected(Boolean(result.connected), result.connected ? "Flow 연결됨" : "연결 안 됨");
-  currentFlowProject = result.project || null;
-  renderProjectMemory();
-  if (!notify) return result;
-  if (!result.connected) showToast(result.error || "Flow 프로젝트 탭을 열어 주세요.");
-  else if (result.project?.savedProfile) showToast(`Flow 프로젝트와 연결되었습니다. 저장된 캐릭터 ${result.project.savedProfile.characterCount}명을 불러올 수 있습니다.`);
-  else showToast("Flow 프로젝트와 연결되었습니다. 캐릭터 작업은 이 프로젝트 ID에 자동 보관됩니다.");
-  return result;
+  try {
+    const result = await send("CHECK_FLOW");
+    setConnected(Boolean(result.connected), result.connected ? "Flow 연결됨" : "연결 안 됨");
+    elements.openFlowButton.hidden = Boolean(result.connected);
+    if (!notify) return result;
+    if (!result.connected) showToast(result.error || "Flow 프로젝트 탭을 열어 주세요.");
+    else if (result.project?.savedProfile) showToast(`Flow 프로젝트와 연결되었습니다. 저장된 캐릭터 ${result.project.savedProfile.characterCount}명을 불러올 수 있습니다.`);
+    else showToast("Flow 프로젝트와 연결되었습니다. 캐릭터 작업은 이 프로젝트 ID에 자동 보관됩니다.");
+    return result;
+  } finally {
+    flowCheckInFlight = false;
+  }
+}
+
+async function clearPromptDrafts() {
+  clearTimeout(sourceSaveTimer);
+  sceneSource = "";
+  introSource = "";
+  thumbnailSource = "";
+  introFileName = "";
+  elements.fileInput.value = "";
+  elements.promptSource.value = "";
+  renderInputMode();
+  analysis = inputMode === "intro"
+    ? analyzeIntroAssets({ introText: "", thumbnailText: "", knownCharacterKeys: knownCharacterKeys() })
+    : analyzePrompts("", { mode: "scene", knownCharacterKeys: knownCharacterKeys() });
+  renderAnalysis();
+  await chrome.storage.local.remove(PROMPT_DRAFT_KEYS);
 }
 
 function withUiError(operation) {
@@ -517,18 +545,6 @@ elements.introModeButton.addEventListener("click", () => {
   chrome.storage.local.set({ flowBatchInputMode: inputMode }).catch(() => {});
 });
 elements.fileInput.addEventListener("change", withUiError(async () => readFile(elements.fileInput.files?.[0])));
-elements.clearSourceButton.addEventListener("click", () => {
-  if (inputMode === "intro") {
-    introSource = "";
-    thumbnailSource = "";
-    introFileName = "";
-  } else {
-    sceneSource = "";
-  }
-  elements.fileInput.value = "";
-  renderInputMode();
-  analyzeSource();
-});
 elements.dropZone.addEventListener("dragover", (event) => { event.preventDefault(); elements.dropZone.classList.add("dragging"); });
 elements.dropZone.addEventListener("dragleave", () => elements.dropZone.classList.remove("dragging"));
 elements.dropZone.addEventListener("drop", withUiError(async (event) => {
@@ -554,48 +570,49 @@ elements.retryFailedFooterButton.addEventListener("click", withUiError(async () 
 }));
 elements.resetButton.addEventListener("click", withUiError(async () => {
   state = await send("RESET_QUEUE");
+  await clearPromptDrafts();
   renderState();
   showToast("작업 큐를 초기화했습니다.");
 }));
-elements.openFlowButton.addEventListener("click", withUiError(() => send("OPEN_FLOW")));
-elements.checkFlowButton.addEventListener("click", withUiError(checkFlow));
-elements.loadProjectCharactersButton.addEventListener("click", withUiError(async () => {
-  const result = await send("LOAD_PROJECT_CHARACTERS");
-  state = result.state;
-  currentFlowProject = {
-    projectId: result.profile?.projectId || state.flowProjectId,
-    projectTitle: result.profile?.projectTitle || state.flowProjectTitle,
-    savedProfile: result.profile || null
-  };
-  analyzeSource();
-  renderState();
-  showToast(`${result.importedFromFlow ? "Flow에서" : "저장된 작업내역에서"} 캐릭터 ${result.profile?.characterCount || state.characters.length}명을 불러왔고, Flow 등록 ${result.matchedKeys.length}명을 확인했습니다.`);
+elements.openFlowButton.addEventListener("click", withUiError(async () => {
+  await send("OPEN_FLOW");
+  window.setTimeout(() => checkFlow({ notify: false }).catch(() => {}), 500);
 }));
+elements.checkFlowButton.addEventListener("click", withUiError(checkFlow));
 elements.syncCharactersButton.addEventListener("click", withUiError(async () => {
   const result = await send("SYNC_FLOW_STATE");
   state = result.state;
+  analyzeSource();
   renderState();
-  showToast(`Flow에서 등록된 캐릭터 ${result.matchedKeys.length}명을 큐와 동기화했습니다.`);
+  showToast(`Flow에서 등록된 캐릭터 ${result.matchedKeys?.length || result.registeredKeys?.length || 0}명을 읽었습니다.`);
 }));
 elements.downloadProjectButton.addEventListener("click", withUiError(async () => {
   downloadBusy = true;
   elements.downloadProgress.hidden = false;
   elements.downloadProgress.classList.remove("error");
   elements.downloadProgressBar.style.width = "4%";
-  elements.downloadStatus.textContent = "Flow 모든 미디어 카드에서 원본 이미지 URL을 순서대로 수집하는 중";
+  elements.downloadStatus.textContent = "Flow 모든 미디어 카드에서 자산 ID와 원본 이미지를 수집하는 중";
   renderState();
   try {
     const result = await send("DOWNLOAD_PROJECT");
     const missing = [
       result.missingScenes?.length ? `장면 ${result.missingScenes.join(", ")}` : "",
+      result.missingIntros?.length ? `인트로 ${result.missingIntros.join(", ")}` : "",
+      result.missingThumbnails?.length ? "썸네일" : "",
       result.missingCharacters?.length ? `캐릭터 ${result.missingCharacters.join(", ")}` : ""
     ].filter(Boolean);
     elements.downloadProgressBar.style.width = "100%";
     const totalMedia = result.removedCharacterMediaCount
-      ? `전체 ${result.allMediaCount}장 → 장면 ${result.scannedSceneCount}/${result.expectedSceneCount}장`
+      ? `전체 ${result.allMediaCount}장 → 작업 ${result.scannedSceneCount}/${result.expectedSceneCount}장`
       : `카드 ${result.scannedSceneCount}/${result.expectedSceneCount}장`;
     const extras = result.extraSceneCount ? ` · 추가 카드 ${result.extraSceneCount}장 제외` : "";
-    elements.downloadStatus.textContent = `${result.archiveFilename} · ${totalMedia} · 장면 ${result.sceneCount}장 · 캐릭터 ${result.characterCount}장${extras}${missing.length ? ` · 미확인 ${missing.join(" / ")}` : ""}`;
+    const types = [
+      result.sceneCount ? `장면 ${result.sceneCount}장` : "",
+      result.introCount ? `인트로 ${result.introCount}장` : "",
+      result.thumbnailCount ? `썸네일 ${result.thumbnailCount}장` : "",
+      result.characterCount ? `캐릭터 ${result.characterCount}장` : ""
+    ].filter(Boolean).join(" · ");
+    elements.downloadStatus.textContent = `${result.archiveFilename} · ${totalMedia} · ${types}${extras}${missing.length ? ` · 미확인 ${missing.join(" / ")}` : ""}`;
     showToast(`${result.downloaded}개 이미지를 ZIP 파일 하나로 저장했습니다.`);
   } catch (error) {
     const message = String(error?.message || error);
@@ -607,16 +624,61 @@ elements.downloadProjectButton.addEventListener("click", withUiError(async () =>
     renderState();
   }
 }));
-elements.delaySeconds.addEventListener("change", () => {
-  const seconds = Math.min(600, Math.max(60, Number(elements.delaySeconds.value || 60)));
-  elements.delaySeconds.value = String(seconds);
+elements.delayRange.addEventListener("input", () => {
+  const seconds = Math.min(MAX_DELAY_MS / 1_000, Math.max(MIN_DELAY_MS / 1_000, Number(elements.delayRange.value || 60)));
+  elements.delayValue.value = `${seconds}초`;
+  elements.delayValue.textContent = `${seconds}초`;
+  elements.delayValueLabel.textContent = elements.randomDelayToggle.checked ? "60~90초 사이 랜덤으로 대기합니다" : `${seconds}초`;
 });
+elements.delayRange.addEventListener("change", withUiError(async () => {
+  state = await send("UPDATE_OPTIONS", { options: optionsFromControls() });
+  renderState();
+}));
+elements.randomDelayToggle.addEventListener("change", withUiError(async () => {
+  state = await send("UPDATE_OPTIONS", { options: optionsFromControls() });
+  renderState();
+}));
 elements.modelSelect.addEventListener("change", withUiError(async () => {
   state = await send("UPDATE_OPTIONS", { options: { model: elements.modelSelect.value } });
   renderState();
   showToast(`${state.options.model} 모델로 변경했습니다. 다음 생성부터 Flow에도 적용됩니다.`);
 }));
+elements.aspectRatioSelect.addEventListener("change", withUiError(async () => {
+  state = await send("UPDATE_OPTIONS", { options: { aspectRatio: elements.aspectRatioSelect.value } });
+  renderState();
+}));
+elements.imageCountSelect.addEventListener("change", withUiError(async () => {
+  state = await send("UPDATE_OPTIONS", { options: { imagesPerPrompt: Number(elements.imageCountSelect.value) } });
+  renderState();
+}));
+async function copyPrompt(jobId) {
+  const job = state.jobs.find((entry) => entry.id === jobId);
+  if (!job) throw new Error("복사할 프롬프트 작업을 찾지 못했습니다.");
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(job.prompt);
+  } else {
+    const textarea = document.createElement("textarea");
+    textarea.value = job.prompt;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.append(textarea);
+    textarea.select();
+    if (!document.execCommand("copy")) throw new Error("프롬프트를 클립보드에 복사하지 못했습니다.");
+    textarea.remove();
+  }
+  showToast(`${job.title} 프롬프트를 복사했습니다.`);
+}
 elements.jobList.addEventListener("click", withUiError(async (event) => {
+  const copyButton = event.target.closest("[data-copy-prompt]");
+  if (copyButton) {
+    await copyPrompt(copyButton.dataset.copyPrompt);
+    return;
+  }
+  const assetButton = event.target.closest("[data-open-asset]");
+  if (assetButton) {
+    await send("OPEN_ASSET", { url: assetButton.dataset.openAsset });
+    return;
+  }
   const prepareButton = event.target.closest("[data-prepare-manual-job]");
   if (prepareButton) {
     state = await send("PREPARE_MANUAL_SCENE", { jobId: prepareButton.dataset.prepareManualJob });
@@ -690,6 +752,10 @@ chrome.runtime.onMessage.addListener((message) => {
 setInterval(() => {
   if (state.status === "waiting" && state.nextRunAt) renderState();
 }, 1_000);
+
+setInterval(() => {
+  if (!flowCheckInFlight) checkFlow({ notify: false }).catch(() => {});
+}, 2_000);
 
 async function initialize() {
   const [storedState, draft] = await Promise.all([

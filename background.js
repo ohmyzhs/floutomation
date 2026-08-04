@@ -1,17 +1,20 @@
 import {
-  MIN_DELAY_MS,
   QUEUE_ALARM,
   STATE_KEY,
   applyRegisteredCharacterKeys,
   carryForwardCompletedTasks,
+  canAutomaticallyRetry,
   createCharacters,
   createInitialState,
   createJobs,
   findNextTask,
   hasPendingTasks,
+  markSceneFailedAndContinue,
+  MAX_AUTOMATIC_RETRIES,
   hydrateState,
   isBlockingFlowError,
   normalizeOptions,
+  nextTaskDelayMs,
   prepareSceneAutomaticRetry,
   prepareSceneNavigationRecovery,
   rollbackUnverifiedCompletedScenes,
@@ -79,6 +82,17 @@ function updateState(mutator) {
 
 function isFlowUrl(url) {
   return /^https:\/\/labs\.google\/fx\/(?:[^/]+\/)?tools\/flow(?:\/|$)/i.test(String(url || ""));
+}
+
+function isFlowAssetUrl(url) {
+  try {
+    const parsed = new URL(String(url || ""));
+    return parsed.origin === "https://labs.google"
+      && isFlowUrl(parsed.href)
+      && /\/project\/[^/?#]+\/edit\/[^/?#]+$/i.test(parsed.pathname);
+  } catch {
+    return false;
+  }
 }
 
 function flowProjectFromTab(tab) {
@@ -345,6 +359,17 @@ function findTask(state, taskId, taskType = state.activeTaskType) {
   return getTaskCollection(state, taskType).find((entry) => entry.id === taskId) || null;
 }
 
+function decorateTaskAssets(task, assets) {
+  return (Array.isArray(assets) ? assets : []).map((asset) => ({
+    ...asset,
+    prompt: asset?.prompt || task?.prompt || "",
+    title: asset?.title || task?.title || task?.displayName || "",
+    sourceMode: asset?.sourceMode || task?.sourceMode || (task?.key ? "character" : "scene"),
+    number: asset?.number || task?.sourceNumber || task?.number || task?.index + 1,
+    kind: asset?.kind || (task?.key ? "character" : task?.sourceMode || "scene")
+  }));
+}
+
 async function pauseWithError(message, taskId = null, taskType = null) {
   await chrome.alarms.clear(QUEUE_ALARM);
   return updateState((state) => {
@@ -398,7 +423,15 @@ async function scheduleSceneAutomaticRetry(message, jobId = null) {
       return;
     }
 
+    if (!canAutomaticallyRetry(job) || Number(job.autoRetryCount || 0) >= MAX_AUTOMATIC_RETRIES) {
+      markSceneFailedAndContinue(draft, activeId, message);
+      return;
+    }
     const retry = prepareSceneAutomaticRetry(job, message);
+    if (!retry) {
+      markSceneFailedAndContinue(draft, activeId, message);
+      return;
+    }
     draft.activeJobId = null;
     draft.activeTaskType = null;
     draft.pauseRequested = false;
@@ -447,6 +480,7 @@ async function launchNextJob() {
       next.item.error = null;
       if (next.type === "scene" && !resumeSubmitted) {
         next.item.generationMode = "direct";
+        next.item.resultAssets = [];
         next.item.generationPercentages = [];
         next.item.baselineMedia = [];
         next.item.baselineCapturedAt = null;
@@ -528,7 +562,8 @@ async function completeTask(taskId, taskType, imagesGenerated, assets = []) {
   if (taskType === "scene") {
     const snapshot = await readState();
     const task = findTask(snapshot, taskId, taskType);
-    const verifiedAssets = uniqueAssets([...(task?.resultAssets || []), ...(Array.isArray(assets) ? assets : [])]);
+    const incomingAssets = decorateTaskAssets(task, assets);
+    const verifiedAssets = uniqueAssets([...(task?.resultAssets || []), ...incomingAssets]);
     const expectedImages = Math.max(1, Number(snapshot.options.imagesPerPrompt || 2));
     if (verifiedAssets.length < expectedImages) {
       return scheduleSceneAutomaticRetry(
@@ -549,11 +584,11 @@ async function completeTask(taskId, taskType, imagesGenerated, assets = []) {
     task.completedAt = Date.now();
     if (taskType === "character") {
       task.referenceImages = Math.max(1, Number(imagesGenerated || 1));
-      task.resultAssets = uniqueAssets([...(task.resultAssets || []), ...assets]).slice(0, 1);
+      task.resultAssets = uniqueAssets([...(task.resultAssets || []), ...decorateTaskAssets(task, assets)]).slice(0, 1);
     }
     else {
       task.imagesGenerated = Math.max(0, Number(imagesGenerated || draft.options.imagesPerPrompt));
-      task.resultAssets = uniqueAssets([...(task.resultAssets || []), ...assets]).slice(0, draft.options.imagesPerPrompt);
+      task.resultAssets = uniqueAssets([...(task.resultAssets || []), ...decorateTaskAssets(task, assets)]).slice(0, draft.options.imagesPerPrompt);
       task.generationPercentages = [];
       task.baselineMedia = [];
       task.baselineCapturedAt = null;
@@ -581,7 +616,7 @@ async function completeTask(taskId, taskType, imagesGenerated, assets = []) {
       draft.nextRunAt = null;
     } else {
       draft.status = "waiting";
-      draft.nextRunAt = Date.now() + Math.max(MIN_DELAY_MS, draft.options.delayMs);
+      draft.nextRunAt = Date.now() + nextTaskDelayMs(draft.options);
     }
   });
   if (taskType === "character") await archiveProjectCharacters(state);
@@ -606,6 +641,9 @@ function sceneMessagePayload(job) {
     id: job.id,
     prompt: job.prompt,
     title: job.title,
+    number: job.number,
+    sourceNumber: job.sourceNumber,
+    sourceMode: job.sourceMode,
     characterRefs: job.characterRefs,
     script: job.script,
     progress: job.progress,
@@ -675,9 +713,7 @@ async function synchronizeFlowCharacters() {
   if (current.activeJobId || ["running", "waiting", "pausing"].includes(current.status)) {
     throw new Error("실행 중인 큐를 먼저 중단한 뒤 Flow 상태를 동기화해 주세요.");
   }
-  if (!current.characters.length) {
-    return { state: current, registeredKeys: [], matchedKeys: [], surface: null };
-  }
+  if (!current.characters.length) return loadCurrentProjectCharacters();
 
   const flowProject = await findCurrentFlowProject(current.tabId);
   if (!flowProject?.tab?.id) throw new Error("Flow 캐릭터 상태를 확인할 프로젝트 탭이 없습니다.");
@@ -913,6 +949,12 @@ async function handleFlowEvent(message, sender) {
       if (Number.isInteger(message.baselineFailureCount)) {
         job.baselineFailureCount = Math.max(0, message.baselineFailureCount);
       }
+      if (Array.isArray(message.assets) && message.assets.length) {
+        job.resultAssets = uniqueAssets([
+          ...job.resultAssets,
+          ...decorateTaskAssets(job, message.assets)
+        ]).slice(0, state.options.imagesPerPrompt);
+      }
       if (message.requestSubmittedAt) job.requestSubmittedAt = Number(message.requestSubmittedAt);
       if (message.generationMode) job.generationMode = String(message.generationMode);
       job.lastHeartbeatAt = Date.now();
@@ -1090,7 +1132,7 @@ async function downloadProject() {
 
     const archive = await buildProjectArchive(manifest.entries);
     const zipUrl = archive.url;
-    const archiveFilename = `${manifest.folder}.zip`;
+    const archiveFilename = manifest.archiveFilename;
     broadcastDownloadProgress("downloading", archive.count, manifest.entries.length, "프로젝트 ZIP 파일 다운로드 요청 중");
     try {
       await chrome.downloads.download({
@@ -1110,8 +1152,12 @@ async function downloadProject() {
       downloaded: archive.count,
       total: manifest.entries.length,
       sceneCount: manifest.entries.filter((entry) => entry.kind === "scene").length,
+      introCount: manifest.entries.filter((entry) => entry.kind === "intro").length,
+      thumbnailCount: manifest.entries.filter((entry) => entry.kind === "thumbnail").length,
       characterCount: manifest.entries.filter((entry) => entry.kind === "character").length,
       missingScenes: manifest.missingScenes,
+      missingIntros: manifest.missingIntros,
+      missingThumbnails: manifest.missingThumbnails,
       missingCharacters: manifest.missingCharacters,
       scannedSceneCount: manifest.scannedSceneCount,
       expectedSceneCount: manifest.expectedSceneCount,
@@ -1146,17 +1192,18 @@ async function handleUiMessage(message) {
       const previousState = { characters: state.characters, jobs: state.jobs };
       const isIntroQueue = message.queueMode === "intro";
       const existingJobs = reuseExistingCharacters ? state.jobs.map((job) => ({ ...job })) : [];
-      const existingMaximum = existingJobs.reduce((maximum, job, index) => Math.max(maximum, Number(job.number || index + 1)), 0);
       const queuedPrompts = (Array.isArray(message.prompts) ? message.prompts : []).map((prompt, index) => ({
         ...prompt,
-        number: isIntroQueue ? existingMaximum + index + 1 : prompt.number,
+        number: Number(prompt.number || prompt.sourceNumber || index + 1),
+        sourceNumber: Number(prompt.sourceNumber || prompt.number || index + 1),
         sourceMode: isIntroQueue ? prompt.sourceMode || "intro" : prompt.sourceMode || "scene"
       }));
-      const jobs = [...existingJobs, ...createJobs(queuedPrompts)];
+      const jobs = [...existingJobs, ...createJobs(queuedPrompts)]
+        .map((job, index) => ({ ...job, index }));
       const characters = reuseExistingCharacters
         ? state.characters.map((character) => ({ ...character }))
         : createCharacters(Array.isArray(message.characters) ? message.characters : [], {
-          alreadyRegistered: Boolean(message.charactersAlreadyRegistered)
+          alreadyRegistered: false
         });
       carryForwardCompletedTasks({ characters, jobs }, previousState);
       state.jobs = jobs;
@@ -1339,23 +1386,33 @@ async function handleUiMessage(message) {
   }
 
   if (message.type === "PAUSE_QUEUE") {
+    const beforePause = await readState();
+    const interruptedTaskId = beforePause.activeJobId;
+    const interruptedTaskType = beforePause.activeTaskType;
     const state = await updateState((draft) => {
       draft.manualPause = true;
-      if (draft.activeJobId) {
-        draft.pauseRequested = true;
-        draft.status = "pausing";
+      draft.pauseRequested = false;
+      if (interruptedTaskId) {
+        if (interruptedTaskType === "character") {
+          setCharacterReady(draft, interruptedTaskId, false, "대기열 중단 · 다시 생성 대기");
+        } else {
+          setJobReady(draft, interruptedTaskId, false, "대기열 중단 · 다시 생성 대기");
+        }
+        draft.activeJobId = null;
+        draft.activeTaskType = null;
       } else {
-        draft.pauseRequested = false;
-        draft.status = "paused";
-        draft.nextRunAt = null;
+        draft.activeJobId = null;
+        draft.activeTaskType = null;
       }
+      draft.status = "paused";
+      draft.nextRunAt = null;
     });
     await chrome.alarms.clear(QUEUE_ALARM);
-    if (state.activeJobId && state.tabId) {
+    if (interruptedTaskId && state.tabId) {
       sendToTab(state.tabId, {
-        type: "PAUSE_FLOW_TASK",
-        taskId: state.activeJobId,
-        taskType: state.activeTaskType
+        type: "STOP_FLOW_TASK",
+        taskId: interruptedTaskId,
+        taskType: interruptedTaskType
       }).catch(() => {});
     }
     return state;
@@ -1434,6 +1491,13 @@ async function handleUiMessage(message) {
       return { opened: true, tabId: existing.id };
     }
     const tab = await chrome.tabs.create({ url: "https://labs.google/fx/tools/flow/" });
+    return { opened: true, tabId: tab.id };
+  }
+
+  if (message.type === "OPEN_ASSET") {
+    const url = String(message.url || "");
+    if (!isFlowAssetUrl(url)) throw new Error("Flow 이미지 상세보기 주소가 올바르지 않습니다.");
+    const tab = await chrome.tabs.create({ url, active: true });
     return { opened: true, tabId: tab.id };
   }
 

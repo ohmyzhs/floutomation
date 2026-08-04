@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   buildDownloadManifest,
+  sanitizeArchiveFilename,
   sanitizePathSegment
 } from "../lib/download-manifest.js";
 import { createCharacters, createInitialState, createJobs } from "../lib/queue-state.js";
@@ -20,16 +21,16 @@ test("download manifest trusts oldest-first Flow card order and does not read pr
       { url: "https://example.test/2a" },
       { url: "https://example.test/2b" }
     ],
-    characterAssets: [{ name: "saebyeol", url: "https://example.test/character" }],
-    now: new Date(2026, 6, 20, 13, 45, 6)
+    characterAssets: [{ name: "saebyeol", url: "https://example.test/character" }]
   });
 
-  assert.equal(manifest.folder, "Flow Batch Studio/바보가 된-거상의 딸-20260720-134506");
+  assert.equal(manifest.folder, "Scene_Images");
+  assert.equal(manifest.archiveFilename, "바보가_된_거상의_딸.zip");
   assert.deepEqual(manifest.entries.map((entry) => entry.filename), [
-    `${manifest.folder}/001-1.jpeg`,
-    `${manifest.folder}/001-2.jpeg`,
-    `${manifest.folder}/002-1.jpeg`,
-    `${manifest.folder}/002-2.jpeg`,
+    `${manifest.folder}/001-01.jpeg`,
+    `${manifest.folder}/001-02.jpeg`,
+    `${manifest.folder}/002-01.jpeg`,
+    `${manifest.folder}/002-02.jpeg`,
     `${manifest.folder}/saebyeol.jpeg`
   ]);
   assert.deepEqual(manifest.missingScenes, []);
@@ -50,14 +51,13 @@ test("download manifest retains ordinal pairing even when queue status is stale"
       { url: "https://example.test/newest-a" },
       { url: "https://example.test/newest-b" }
     ],
-    characterAssets: [],
-    now: new Date(2026, 6, 20, 13, 45, 6)
+    characterAssets: []
   });
   assert.deepEqual(manifest.entries.map((entry) => [entry.url, entry.filename.split("/").pop()]), [
-    ["https://example.test/oldest-a", "001-1.jpeg"],
-    ["https://example.test/oldest-b", "001-2.jpeg"],
-    ["https://example.test/newest-a", "002-1.jpeg"],
-    ["https://example.test/newest-b", "002-2.jpeg"]
+    ["https://example.test/oldest-a", "001-01.jpeg"],
+    ["https://example.test/oldest-b", "001-02.jpeg"],
+    ["https://example.test/newest-a", "002-01.jpeg"],
+    ["https://example.test/newest-b", "002-02.jpeg"]
   ]);
 });
 
@@ -81,6 +81,54 @@ test("download manifest ignores scene cards after the requested ordinal range", 
   ]);
 });
 
+test("download manifest uses tracked asset IDs and labels intro and thumbnail jobs", () => {
+  const state = createInitialState();
+  state.jobs = createJobs([
+    { index: 0, number: 1, sourceNumber: 1, sourceMode: "scene", prompt: "scene" },
+    { index: 1, number: 1, sourceNumber: 1, sourceMode: "intro", prompt: "intro" },
+    { index: 2, number: 1, sourceNumber: 1, sourceMode: "thumbnail", prompt: "thumbnail" }
+  ]).map((job, index) => ({ ...job, index }));
+  state.jobs[0].resultAssets = [
+    { assetId: "scene-b", url: "https://example.test/scene-b" },
+    { assetId: "scene-a", url: "https://example.test/scene-a" }
+  ];
+  state.jobs[1].resultAssets = [
+    { assetId: "intro-1", url: "https://example.test/intro-1" },
+    { assetId: "intro-2", url: "https://example.test/intro-2" }
+  ];
+  state.jobs[2].resultAssets = [
+    { assetId: "thumbnail-1", url: "https://example.test/thumbnail-1" }
+  ];
+  const manifest = buildDownloadManifest({
+    state,
+    projectTitle: "project",
+    orderedSceneAssets: [
+      { assetId: "scene-a", url: "https://example.test/scene-a" },
+      { assetId: "intro-2", url: "https://example.test/intro-2" },
+      { assetId: "scene-b", url: "https://example.test/scene-b" },
+      { assetId: "intro-1", url: "https://example.test/intro-1" },
+      { assetId: "thumbnail-1", url: "https://example.test/thumbnail-1" }
+    ],
+    characterAssets: []
+  });
+
+  assert.deepEqual(manifest.entries.map((entry) => [entry.url, entry.filename.split("/").pop()]), [
+    ["https://example.test/scene-b", "001-01.jpeg"],
+    ["https://example.test/scene-a", "001-02.jpeg"],
+    ["https://example.test/intro-1", "intro1-1.jpeg"],
+    ["https://example.test/intro-2", "intro1-2.jpeg"],
+    ["https://example.test/thumbnail-1", "thumbnail-1.jpeg"]
+  ]);
+});
+
 test("download path segments remove file-system separators", () => {
   assert.equal(sanitizePathSegment('a/b:c*?"<>|'), "a-b-c------");
+});
+
+test("archive filenames use the normalized Flow project title", () => {
+  assert.equal(
+    sanitizeArchiveFilename("015_종으로 팔려간 며느리 등의 점 세 개"),
+    "015_종으로_팔려간_며느리_등의_점_세_개"
+  );
+  assert.equal(sanitizeArchiveFilename("title/with:unsafe*chars"), "title_with_unsafe_chars");
 });

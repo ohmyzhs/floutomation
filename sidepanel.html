@@ -16,9 +16,11 @@
           <h1>Flow Batch Studio</h1>
           <p>이미지 생성 큐</p>
         </div>
-        <button id="checkFlowButton" class="connection-pill" type="button" title="Flow 연결 확인">
+        <button id="openFlowButton" class="flow-shortcut" type="button" title="Flow 열기">Flow 열기 ↗</button>
+        <button id="checkFlowButton" class="connection-pill" type="button" title="Flow 연결 상태 새로고침" aria-label="Flow 연결 상태 새로고침">
           <span id="connectionDot" class="connection-dot"></span>
           <span id="connectionLabel">연결 확인</span>
+          <span class="connection-refresh-icon" aria-hidden="true">↻</span>
         </button>
       </header>
 
@@ -29,34 +31,40 @@
               <p class="eyebrow">QUEUE STATUS</p>
               <h2 id="queueStatusTitle">작업 준비</h2>
             </div>
-            <span id="statusBadge" class="status-badge status-idle">대기</span>
+            <div class="status-heading-actions">
+              <span id="statusBadge" class="status-badge status-idle">대기</span>
+              <button id="downloadProjectButton" class="download-project-button" type="button" title="전체 다운로드" aria-label="전체 다운로드" disabled>
+                <span aria-hidden="true">⇩</span><span class="download-button-label">전체 다운로드</span>
+              </button>
+              <button id="resetButton" class="reset-button" type="button" title="새로시작" aria-label="새로시작" disabled>새로시작 ↺</button>
+            </div>
           </div>
           <div class="overall-progress" aria-label="전체 진행률">
             <div id="overallProgressBar" class="overall-progress-bar"></div>
           </div>
           <div class="stat-grid">
             <div><strong id="completedStat">0</strong><span>완료 작업</span></div>
-            <div><strong id="imageStat">0</strong><span>생성 이미지</span></div>
-            <div><strong id="characterStat">0/0</strong><span>캐릭터</span></div>
             <div><strong id="remainingStat">0</strong><span>남은 작업</span></div>
+            <div><strong id="characterStat">0/0</strong><span>캐릭터</span></div>
+            <div><strong id="imageStat">0</strong><span>생성 이미지</span></div>
           </div>
           <div id="countdownRow" class="countdown-row" hidden>
             <span class="countdown-icon" aria-hidden="true">◷</span>
             <span id="countdownText">다음 작업까지 01:00</span>
           </div>
           <div id="errorBanner" class="error-banner" hidden></div>
-          <div class="project-download-box">
-            <div>
-              <strong>프로젝트 결과</strong>
-              <span>모든 미디어 카드 순서대로 장면 번호와 캐릭터 이름을 저장</span>
-            </div>
-            <button id="downloadProjectButton" class="download-project-button" type="button" disabled>
-              <span aria-hidden="true">⇩</span> 프로젝트 ZIP 다운로드
-            </button>
-            <div id="downloadProgress" class="download-progress" hidden>
-              <div><span id="downloadProgressBar"></span></div>
-              <p id="downloadStatus">Flow 이미지 URL과 ZIP 파일을 준비합니다.</p>
-            </div>
+          <div id="downloadProgress" class="download-progress" hidden>
+            <div><span id="downloadProgressBar"></span></div>
+            <p id="downloadStatus">Flow 이미지 URL과 ZIP 파일을 준비합니다.</p>
+          </div>
+          <div class="status-controls">
+            <p id="queueControlReason" class="dock-disabled-reason" role="status" hidden></p>
+            <span id="startButtonHint" class="button-hint grow">
+              <button id="startButton" class="primary-button full-width" type="button" disabled>생성 시작</button>
+            </span>
+            <button id="pauseButton" class="danger-button grow" type="button" hidden>대기열 중단</button>
+            <button id="resumeButton" class="primary-button grow" type="button" hidden>이어서 실행</button>
+            <button id="retryFailedFooterButton" class="danger-button grow" type="button" hidden>실패 작업 다시 실행</button>
           </div>
         </section>
 
@@ -65,11 +73,10 @@
             <div>
               <p class="section-step">01</p>
               <div>
-                <h2 id="sourceTitle">프롬프트 가져오기</h2>
-                <p id="sourceSubtitle">Markdown 파일 또는 텍스트</p>
+                <h2 id="sourceTitle">이미지생성 작업준비</h2>
+                <p id="sourceSubtitle">Flow_Prompts 파일 또는 텍스트</p>
               </div>
             </div>
-            <button id="clearSourceButton" class="text-button" type="button">비우기</button>
           </div>
 
           <div class="mode-switch" role="tablist" aria-label="이미지 생성 모드">
@@ -81,8 +88,8 @@
           <label id="dropZone" class="drop-zone" for="fileInput">
             <input id="fileInput" type="file" accept=".md,.txt,text/markdown,text/plain" />
             <span class="drop-icon" aria-hidden="true">⇧</span>
-            <span><strong id="dropZoneAction">파일을 선택</strong><span id="dropZoneRest">하거나 여기에 놓으세요</span></span>
-            <small id="dropZoneHint">.md · .txt</small>
+            <span><strong id="dropZoneAction">Flow_Prompts 파일을 선택</strong><span id="dropZoneRest">하거나 여기에 놓으세요</span></span>
+            <small id="dropZoneHint">.md · .txt · 장면과 캐릭터를 자동 분석</small>
           </label>
           <p id="introFileStatus" class="intro-file-status" hidden></p>
 
@@ -93,13 +100,11 @@
           <div id="analysisSummary" class="analysis-summary" hidden>
             <div>
               <strong id="detectedJobCount">0개 작업</strong>
-              <span id="detectedImageCount">총 0장</span>
               <span id="detectedCharacterCount"></span>
+              <span id="detectedImageCount"></span>
             </div>
-            <span id="detectedFormat" class="format-chip">분석 완료</span>
           </div>
           <p id="analysisWarning" class="analysis-warning" hidden></p>
-          <div id="previewList" class="preview-list"></div>
           <span id="applyQueueButtonHint" class="button-hint full-width">
             <button id="applyQueueButton" class="secondary-button full-width" type="button" disabled>분석 결과를 작업 큐에 적용</button>
           </span>
@@ -124,31 +129,35 @@
               <option value="Nano Banana 2 Lite">🍌 Nano Banana 2 Lite</option>
             </select>
           </label>
-          <div class="setting-chips" aria-label="고정 생성 설정">
-            <span>16:9</span>
-            <span>2장</span>
-            <span>모든 미디어 · 에이전트 OFF</span>
-            <span>실행 중 자동 잠금 방지</span>
+          <div class="generation-options">
+            <label class="option-field" for="aspectRatioSelect">
+              <span><strong>비율</strong></span>
+              <select id="aspectRatioSelect">
+                <option value="16:9" selected>16:9</option>
+                <option value="4:3">4:3</option>
+                <option value="1:1">1:1</option>
+                <option value="3:4">3:4</option>
+                <option value="9:16">9:16</option>
+              </select>
+            </label>
+            <label class="option-field" for="imageCountSelect">
+              <span><strong>장수</strong></span>
+              <select id="imageCountSelect">
+                <option value="1">1장</option>
+                <option value="2" selected>2장</option>
+                <option value="3">3장</option>
+                <option value="4">4장</option>
+              </select>
+            </label>
           </div>
-          <label class="delay-field" for="delaySeconds">
-            <span><strong>작업 사이 대기</strong><small>최소 60초</small></span>
-            <span class="number-input"><input id="delaySeconds" type="number" min="60" max="600" step="10" value="60" /><em>초</em></span>
+          <label class="delay-field" for="delayRange">
+            <span><strong>작업 사이 대기</strong><small id="delayValueLabel">60초</small></span>
+            <span class="range-input"><input id="delayRange" type="range" min="60" max="120" step="1" value="60" /><output id="delayValue">60초</output></span>
           </label>
-          <label id="existingCharactersRow" class="checkbox-field" hidden>
-            <input id="charactersAlreadyRegistered" type="checkbox" />
-            <span>
-              <strong>동일한 이름의 캐릭터가 이미 등록됨</strong>
-              <small>선택하면 5명 생성을 건너뛰고 @이름 매핑만 검증합니다</small>
-            </span>
+          <label class="random-delay-field" for="randomDelayToggle">
+            <span><strong>랜덤시간</strong><small id="randomDelayDescription">작업마다 60~90초 사이로 변경</small></span>
+            <input id="randomDelayToggle" type="checkbox" />
           </label>
-          <div id="projectMemoryBox" class="project-memory-box">
-            <div>
-              <strong>프로젝트 캐릭터 보관함</strong>
-              <small id="projectMemoryStatus">Flow 프로젝트를 확인하면 이전 캐릭터를 불러올 수 있습니다.</small>
-            </div>
-            <button id="loadProjectCharactersButton" class="project-memory-button" type="button" disabled>저장된 캐릭터 불러오기</button>
-          </div>
-          <p class="safety-note">고정 간격으로 한 작업씩 실행합니다. 계정 확인이나 CAPTCHA가 표시되면 자동으로 멈춥니다.</p>
         </section>
 
         <section id="characterSection" class="panel-card" aria-labelledby="charactersTitle" hidden>
@@ -187,19 +196,6 @@
         </section>
       </main>
 
-      <footer class="control-dock">
-        <p id="queueControlReason" class="dock-disabled-reason" role="status" hidden></p>
-        <div class="control-dock-row">
-          <button id="openFlowButton" class="icon-button" type="button" title="Flow 열기" aria-label="Flow 열기">↗</button>
-          <span id="startButtonHint" class="button-hint grow">
-            <button id="startButton" class="primary-button full-width" type="button" disabled>생성 시작</button>
-          </span>
-          <button id="pauseButton" class="danger-button grow" type="button" hidden>현재 작업 후 중단</button>
-          <button id="resumeButton" class="primary-button grow" type="button" hidden>이어서 실행</button>
-          <button id="retryFailedFooterButton" class="danger-button grow" type="button" hidden>실패 작업 다시 실행</button>
-          <button id="resetButton" class="icon-button" type="button" title="큐 초기화" aria-label="큐 초기화" disabled>↺</button>
-        </div>
-      </footer>
       <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
     </div>
     <script type="module" src="sidepanel.js"></script>

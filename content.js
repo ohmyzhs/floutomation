@@ -23,7 +23,12 @@
     if (!(element instanceof HTMLElement)) return false;
     const style = getComputedStyle(element);
     const rect = element.getBoundingClientRect();
-    return style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity || 1) > 0 && rect.width > 0 && rect.height > 0;
+    const hiddenPage = document.visibilityState === "hidden";
+    const hasLayout = rect.width > 0 && rect.height > 0;
+    return style.display !== "none"
+      && style.visibility !== "hidden"
+      && Number(style.opacity || 1) > 0
+      && (hasLayout || hiddenPage);
   }
 
   function emit(message) {
@@ -162,6 +167,7 @@
     "Nano Banana 2",
     "Nano Banana 2 Lite"
   ]);
+  const SUPPORTED_FLOW_ASPECT_RATIOS = Object.freeze(["16:9", "4:3", "1:1", "3:4", "9:16"]);
 
   function requestedFlowModel(value) {
     const requested = String(value || "");
@@ -185,8 +191,8 @@
       if (!(menu instanceof HTMLElement) || !visible(menu)) return false;
       const tabs = Array.from(menu.querySelectorAll('[role="tab"]')).filter(visible);
       const hasImageTab = tabs.some((tab) => /이미지|image/.test(normalize(tab.textContent)));
-      const hasRatio = tabs.some((tab) => normalize(tab.textContent).endsWith(normalize("16:9")));
-      const hasCount = tabs.some((tab) => normalize(tab.textContent) === "x2");
+      const hasRatio = tabs.some((tab) => SUPPORTED_FLOW_ASPECT_RATIOS.some((ratio) => normalize(tab.textContent).endsWith(normalize(ratio))));
+      const hasCount = tabs.some((tab) => /^x[1-4]$/.test(normalize(tab.textContent)));
       return hasImageTab && hasRatio && hasCount;
     }) || null;
   }
@@ -210,7 +216,19 @@
     });
   }
 
-  async function ensureDirectImageSettings(input, requestedModel) {
+  function requestedFlowAspectRatio(value) {
+    const requested = String(value || "");
+    return SUPPORTED_FLOW_ASPECT_RATIOS.includes(requested) ? requested : "16:9";
+  }
+
+  function requestedFlowImageCount(value) {
+    const requested = Number(value);
+    return Number.isFinite(requested) ? Math.min(4, Math.max(1, Math.round(requested))) : 2;
+  }
+
+  async function ensureDirectImageSettings(input, requestedModel, requestedAspectRatio, requestedImagesPerPrompt) {
+    const aspectRatio = requestedFlowAspectRatio(requestedAspectRatio);
+    const imagesPerPrompt = requestedFlowImageCount(requestedImagesPerPrompt);
     const settingsButton = await waitFor(() => findDirectSettingsButton(input), {
       timeoutMs: 15_000,
       intervalMs: 200,
@@ -224,8 +242,8 @@
     });
 
     await selectSettingsTab(section, "이미지", (value, target) => value.endsWith(target) || value === "image");
-    await selectSettingsTab(section, "16:9", (value, target) => value.endsWith(target));
-    await selectSettingsTab(section, "x2", (value, target) => value === target || value === "2x");
+    await selectSettingsTab(section, aspectRatio, (value, target) => value.endsWith(target));
+    await selectSettingsTab(section, `x${imagesPerPrompt}`, (value, target) => value === target || value === `${imagesPerPrompt}x`);
     await ensureDirectImageModel(section, requestedModel);
 
     if (findDirectSettingsMenu() && document.contains(settingsButton)) {
@@ -289,6 +307,13 @@
       throw new Error("클릭할 Flow 화면 요소가 사라졌습니다.");
     }
     const rect = element.getBoundingClientRect();
+    const hiddenPage = document.visibilityState === "hidden";
+    if (hiddenPage || rect.width <= 0 || rect.height <= 0) {
+      element.focus?.({ preventScroll: true });
+      element.click();
+      await sleep(Math.max(UI_SETTLE_MS, Number(settleMs || 0)));
+      return { ok: true, clicked: true, synthetic: true };
+    }
     const response = await chrome.runtime.sendMessage({
       type: "FLOW_TRUSTED_CLICK",
       x: rect.left + rect.width / 2,
@@ -349,7 +374,8 @@
         .toLowerCase();
       const rect = element.getBoundingClientRect();
       return (text === "캐릭터" || text === "character")
-        && rect.left + rect.width / 2 < dialogRect.left + dialogRect.width * 0.3;
+        && (document.visibilityState === "hidden"
+          || rect.left + rect.width / 2 < dialogRect.left + dialogRect.width * 0.3);
     };
 
     const semantic = Array.from(dialog.querySelectorAll('button, [role="tab"], [role="button"]')).find(isCharacterLabel);
@@ -571,7 +597,20 @@
     return Array.from(document.querySelectorAll("button")).find((button) => isSubmit(button, false)) || null;
   }
 
+  function assetIdFromDetailUrl(value) {
+    try {
+      const url = new URL(String(value || ""), location.href);
+      const match = url.pathname.match(/\/(?:edit|character)\/([^/?#]+)/i);
+      return match ? decodeURIComponent(match[1]).trim() : "";
+    } catch {
+      return "";
+    }
+  }
+
   function mediaFingerprint(element, index) {
+    const detailUrl = element.closest?.('a[href*="/edit/"]')?.href || "";
+    const assetId = assetIdFromDetailUrl(detailUrl);
+    if (assetId) return `asset:${assetId}`;
     if (element instanceof HTMLImageElement) return `img:${element.currentSrc || element.src || element.srcset || index}`;
     if (element instanceof HTMLVideoElement) return `video:${element.poster || element.currentSrc || index}`;
     if (element instanceof HTMLCanvasElement) return `canvas:${element.width}x${element.height}:${index}`;
@@ -583,11 +622,17 @@
   function downloadableMediaAsset(element) {
     if (element instanceof HTMLImageElement) {
       const url = String(element.currentSrc || element.src || "").trim();
-      return /^https:\/\//i.test(url) ? { url } : null;
+      if (!/^https:\/\//i.test(url)) return null;
+      const detailUrl = String(element.closest?.('a[href*="/edit/"]')?.href || "").trim();
+      return {
+        url,
+        detailUrl,
+        assetId: assetIdFromDetailUrl(detailUrl)
+      };
     }
     const style = element.getAttribute("style") || "";
     const match = style.match(/background-image\s*:\s*url\(["']?([^"')]+)/i);
-    return match && /^https:\/\//i.test(match[1]) ? { url: match[1] } : null;
+    return match && /^https:\/\//i.test(match[1]) ? { url: match[1], detailUrl: "", assetId: "" } : null;
   }
 
   function captureLargeMediaAssets() {
@@ -615,8 +660,9 @@
     const seen = new Set();
     const assets = [];
     for (const [fingerprint, asset] of mediaAssets) {
-      if (baselineMedia.has(fingerprint) || !asset?.url || seen.has(asset.url)) continue;
-      seen.add(asset.url);
+      const identity = asset?.assetId || asset?.detailUrl || asset?.url;
+      if (baselineMedia.has(fingerprint) || !asset?.url || seen.has(identity)) continue;
+      seen.add(identity);
       assets.push(asset);
     }
     return assets.slice(0, Math.max(1, Number(expectedImages || 2)));
@@ -704,12 +750,13 @@
   }
 
   function captureGenerationFailureCards() {
-    const failurePattern = /(?:생성.{0,30}(?:일일\s*)?한도|일일\s*한도|다른\s*모델을\s*사용|generation.{0,30}(?:quota|limit)|quota|limit reached|not enough credits)/i;
+    const failurePattern = /(?:생성.{0,30}(?:일일\s*)?한도|일일\s*한도|다른\s*모델을\s*사용|generation.{0,30}(?:quota|limit)|quota|limit reached|not enough credits|가이드라인|안전\s*정책|moderation|safety|guideline|unsafe|blocked|violat(?:e|ion))/i;
     return Array.from(document.querySelectorAll("button"))
       .filter((button) => {
         if (!(button instanceof HTMLElement) || !visible(button)) return false;
         const text = String(button.textContent || "").replace(/\s+/g, " ").trim();
-        return /(?:실패|failed|warning)/i.test(text) && failurePattern.test(text);
+        return /(?:실패|failed|warning|차단|blocked|safety|policy|guideline|moderation|unsafe|위반)/i.test(text)
+          && failurePattern.test(text);
       });
   }
 
@@ -725,7 +772,7 @@
   }
 
   function findFlowError({ baselineFailureCount = null } = {}) {
-    const errorPattern = /(?:오류|실패|한도|크레딧.{0,12}부족|잠시 후 다시|로봇이 아님|사람인지 확인|error|failed|quota|limit reached|not enough credits|captcha|verify (?:that )?you(?:'re| are) human)/i;
+    const errorPattern = /(?:오류|실패|한도|크레딧.{0,12}부족|잠시 후 다시|로봇이 아님|사람인지 확인|가이드라인|안전\s*정책|콘텐츠.{0,20}(?:차단|생성할 수)|error|failed|quota|limit reached|not enough credits|captcha|verify (?:that )?you(?:'re| are) human|moderation|safety|guideline|unsafe|blocked|violat(?:e|ion))/i;
     const elements = Array.from(document.querySelectorAll('[role="alert"], [role="status"], [data-sonner-toast], [data-state="open"]'));
     let message = elements
       .filter(visible)
@@ -752,6 +799,9 @@
     let lastProgressSignature = "";
 
     while (Date.now() - startedAt < timeoutMs) {
+      if (pauseRequested) {
+        return { paused: true, imagesGenerated: 0, assets: [] };
+      }
       const elapsed = Date.now() - startedAt;
       const progressCards = findGenerationProgressCards(expectedPrompt).slice(0, expectedImages);
       const generationPercentages = progressCards.map((card) => card.percentage);
@@ -794,7 +844,8 @@
         throw new Error(`Flow 생성이 끝났지만 다운로드 가능한 결과 이미지 ${expectedImages}장을 확인하지 못했습니다.`);
       }
 
-      const progressSignature = `${generationPercentages.join(",")}|${detectedImages}`;
+      const assetSignature = resultAssets.map((asset) => asset.assetId || asset.detailUrl || asset.url).join(",");
+      const progressSignature = `${generationPercentages.join(",")}|${detectedImages}|${assetSignature}`;
       if (progressSignature !== lastProgressSignature || Date.now() - lastProgressSentAt >= 5_000) {
         const timeProgress = Math.min(88, 25 + Math.round((elapsed / timeoutMs) * 65));
         const flowProgress = generationPercentages.length ? Math.min(...generationPercentages) : null;
@@ -808,7 +859,8 @@
           stage: progressLabel || (detectedImages > 0 ? `결과 확인 중 · ${detectedImages}/${expectedImages}장 감지` : "Flow 생성 응답 대기 중"),
           progress: flowProgress == null ? timeProgress : Math.max(25, Math.min(94, flowProgress)),
           detectedImages,
-          generationPercentages
+          generationPercentages,
+          assets: resultAssets
         });
         lastProgressSentAt = Date.now();
         lastProgressSignature = progressSignature;
@@ -1027,7 +1079,10 @@
       if (!visible(image)) return false;
       const rect = image.getBoundingClientRect();
       const label = normalize(image.getAttribute("alt") || image.getAttribute("aria-label") || "").replace(/^@/, "");
-      return label === target && rect.width >= 80 && rect.height >= 80;
+      const hasImageSize = rect.width >= 80 && rect.height >= 80
+        || image.naturalWidth >= 80 && image.naturalHeight >= 80
+        || document.visibilityState === "hidden";
+      return label === target && hasImageSize;
     });
     if (image) return image;
 
@@ -1048,7 +1103,8 @@
     return {
       name: String(key || "").replace(/^@/, ""),
       url: rawUrl.replace(/([?&])mediaUrlType=[^&]+&?/i, (_whole, prefix) => prefix === "?" ? "" : "&").replace(/[?&]$/, ""),
-      detailUrl: String(link?.href || "")
+      detailUrl: String(link?.href || ""),
+      assetId: assetIdFromDetailUrl(link?.href)
     };
   }
 
@@ -1062,7 +1118,10 @@
     for (const image of Array.from(document.querySelectorAll("img"))) {
       if (!visible(image)) continue;
       const rect = image.getBoundingClientRect();
-      if (rect.width < 80 || rect.height < 80) continue;
+      const hasImageSize = rect.width >= 80 && rect.height >= 80
+        || image.naturalWidth >= 80 && image.naturalHeight >= 80
+        || document.visibilityState === "hidden";
+      if (!hasImageSize) continue;
       const key = characterKeyFromLabel(image.getAttribute("alt") || image.getAttribute("aria-label"));
       if (key) keys.add(key);
     }
@@ -1393,6 +1452,10 @@
           baselineSignals: new Set(),
           baselineFailureCount: Number.isInteger(job.baselineFailureCount) ? job.baselineFailureCount : 0
         });
+        if (generationResult.paused) {
+          emit({ type: "FLOW_JOB_PAUSED", jobId: job.id });
+          return;
+        }
         emit({
           type: "FLOW_JOB_COMPLETED",
           jobId: job.id,
@@ -1498,13 +1561,13 @@
         type: "FLOW_JOB_PROGRESS",
         jobId: job.id,
         phase: "configuring",
-        stage: `일반 생성 · ${requestedFlowModel(options.model)} · 16:9 · 2장 확인 중`,
+        stage: `일반 생성 · ${requestedFlowModel(options.model)} · ${requestedFlowAspectRatio(options.aspectRatio)} · ${requestedFlowImageCount(options.imagesPerPrompt)}장 확인 중`,
         progress: 12,
         generationMode: "direct",
         baselineMedia: Array.from(workspaceBaselineMedia),
         baselineCapturedAt
       });
-      input = await ensureDirectImageSettings(input, options.model);
+      input = await ensureDirectImageSettings(input, options.model, options.aspectRatio, options.imagesPerPrompt);
 
       if (pauseRequested) {
         emit({ type: "FLOW_JOB_PAUSED", jobId: job.id });
@@ -1562,6 +1625,10 @@
         baselineSignals,
         baselineFailureCount
       });
+      if (generationResult.paused) {
+        emit({ type: "FLOW_JOB_PAUSED", jobId: job.id });
+        return;
+      }
       emit({
         type: "FLOW_JOB_COMPLETED",
         jobId: job.id,
@@ -1584,7 +1651,7 @@
 
     try {
       let input = await enterDirectMediaWorkspace();
-      input = await ensureDirectImageSettings(input, options.model);
+      input = await ensureDirectImageSettings(input, options.model, options.aspectRatio, options.imagesPerPrompt);
       await setPromptWithCharacterReferences(input, job.prompt, job.characterRefs || []);
       return { prepared: true };
     } finally {
@@ -1595,12 +1662,20 @@
   }
 
   function currentProjectTitle() {
-    const title = String(document.title || "").replace(/^Google Flow\s*[-–—]\s*/i, "").trim();
-    if (title) return title;
-    const editableTitle = Array.from(document.querySelectorAll('input, [contenteditable="true"]'))
+    const editableTitle = Array.from(document.querySelectorAll(
+      'input[aria-label="수정 가능한 텍스트"], [contenteditable="true"][aria-label="수정 가능한 텍스트"]'
+    ))
       .map((element) => String(element.value || element.textContent || "").trim())
       .find((value) => value && value.length < 120);
-    return editableTitle || "Flow project";
+    if (editableTitle) return editableTitle;
+
+    const title = String(document.title || "").replace(/^Google Flow\s*[-–—]\s*/i, "").trim();
+    if (title && !/^Google Flow$/i.test(title)) return title;
+
+    const fallbackTitle = Array.from(document.querySelectorAll("input, [contenteditable=\"true\"]"))
+      .map((element) => String(element.value || element.textContent || "").trim())
+      .find((value) => value && value.length < 120);
+    return fallbackTitle || "Flow project";
   }
 
   function sceneMediaCardAssets() {
@@ -1613,6 +1688,7 @@
         return {
           url,
           detailUrl: String(link.href || ""),
+          assetId: assetIdFromDetailUrl(link.href),
           width: Number(image?.naturalWidth || 0),
           height: Number(image?.naturalHeight || 0)
         };
@@ -1812,7 +1888,7 @@
       return false;
     }
 
-    if (message?.type === "PAUSE_FLOW_TASK") {
+    if (message?.type === "STOP_FLOW_TASK" || message?.type === "PAUSE_FLOW_TASK") {
       if (!message.taskId || message.taskId === activeJobId) pauseRequested = true;
       sendResponse({ accepted: true, activeJobId, activeTaskType });
       return false;

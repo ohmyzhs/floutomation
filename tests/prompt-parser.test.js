@@ -171,6 +171,26 @@ test("intro-hook repeated character mentions stay one binding per character", ()
   assert.deepEqual(result.prompts[0].characterRefs, ["seoon", "jeongin"]);
 });
 
+test("intro-hook scene headers accept moderation notes and parenthetical labels", () => {
+  const result = analyzePrompts(`
+===== 씬 6 =====※모더레이션 대응 수정본
+[A] 이미지 프롬프트:
+\`\`\`
+@seoon walks through the rain.
+\`\`\`
+===== 씬 5 =====(클라이맥스)
+[A] 이미지 프롬프트:
+\`\`\`
+@jeongin looks toward the lighthouse.
+\`\`\`
+  `, { mode: "intro", knownCharacterKeys: ["seoon", "jeongin"] });
+
+  assert.equal(result.prompts.length, 2);
+  assert.deepEqual(result.prompts.map((prompt) => prompt.number), [6, 5]);
+  assert.match(result.prompts[0].prompt, /walks through the rain/);
+  assert.match(result.prompts[1].prompt, /lighthouse/);
+});
+
 test("intro-hook mode warns and blocks references absent from the current project", () => {
   const result = analyzePrompts(`
 ===== 씬 1 =====

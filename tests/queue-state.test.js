@@ -4,10 +4,14 @@ import assert from "node:assert/strict";
 import {
   AUTO_RETRY_BASE_MS,
   AUTO_RETRY_MAX_MS,
+  MAX_AUTOMATIC_RETRIES,
+  MAX_DELAY_MS,
   MIN_DELAY_MS,
+  RANDOM_DELAY_MAX_MS,
   SUPPORTED_MODELS,
   applyRegisteredCharacterKeys,
   carryForwardCompletedTasks,
+  canAutomaticallyRetry,
   createCharacters,
   createInitialState,
   createJobs,
@@ -17,9 +21,11 @@ import {
   hydrateState,
   isBlockingFlowError,
   normalizeOptions,
+  nextTaskDelayMs,
   automaticRetryDelayMs,
   prepareSceneAutomaticRetry,
   prepareSceneNavigationRecovery,
+  markSceneFailedAndContinue,
   retryFailedTasks,
   rollbackUnverifiedCompletedScenes,
   setCharacterReady,
@@ -32,15 +38,24 @@ test("the request interval cannot be configured below 60 seconds", () => {
   assert.equal(normalizeOptions({ delayMs: 90_000 }).delayMs, 90_000);
 });
 
-test("fixed Flow image settings cannot be overwritten", () => {
+test("Flow image settings accept supported ratio and image count values", () => {
   const options = normalizeOptions({
     model: "another model",
     aspectRatio: "1:1",
     imagesPerPrompt: 4
   });
   assert.equal(options.model, "Nano Banana 2");
-  assert.equal(options.aspectRatio, "16:9");
-  assert.equal(options.imagesPerPrompt, 2);
+  assert.equal(options.aspectRatio, "1:1");
+  assert.equal(options.imagesPerPrompt, 4);
+  assert.equal(normalizeOptions({ aspectRatio: "invalid", imagesPerPrompt: 9 }).aspectRatio, "16:9");
+  assert.equal(normalizeOptions({ aspectRatio: "invalid", imagesPerPrompt: 9 }).imagesPerPrompt, 4);
+});
+
+test("delay settings stay within the UI range and random mode uses 60 to 90 seconds", () => {
+  assert.equal(normalizeOptions({ delayMs: 1_000 }).delayMs, MIN_DELAY_MS);
+  assert.equal(normalizeOptions({ delayMs: 600_000 }).delayMs, MAX_DELAY_MS);
+  assert.equal(nextTaskDelayMs({ randomDelay: true }, () => 0), MIN_DELAY_MS);
+  assert.equal(nextTaskDelayMs({ randomDelay: true }, () => 0.99999), RANDOM_DELAY_MAX_MS);
 });
 
 test("all supported Flow image models are preserved", () => {
@@ -54,15 +69,46 @@ test("all supported Flow image models are preserved", () => {
   }
 });
 
-test("automatic retries back off but continue without a maximum attempt count", () => {
+test("automatic retry delays back off predictably", () => {
   assert.equal(automaticRetryDelayMs(1), AUTO_RETRY_BASE_MS);
   assert.equal(automaticRetryDelayMs(2), 30_000);
   assert.equal(automaticRetryDelayMs(3), AUTO_RETRY_MAX_MS);
   assert.equal(automaticRetryDelayMs(100), AUTO_RETRY_MAX_MS);
 });
 
+test("scene failures allow one automatic retry and then become final failures", () => {
+  const state = createInitialState();
+  state.jobs = createJobs([
+    { title: "scene 1", prompt: "scene 1" },
+    { title: "scene 2", prompt: "scene 2" }
+  ]);
+  const active = state.jobs[0];
+  state.activeJobId = active.id;
+  state.activeTaskType = "scene";
+  state.status = "running";
+  active.status = "generating";
+  active.resultAssets = [{ assetId: "failed-asset", url: "https://example.test/failed" }];
+
+  assert.equal(MAX_AUTOMATIC_RETRIES, 1);
+  assert.equal(canAutomaticallyRetry(active), true);
+  prepareSceneAutomaticRetry(active, "guardrail");
+  assert.equal(active.autoRetryCount, 1);
+  assert.equal(canAutomaticallyRetry(active), false);
+
+  markSceneFailedAndContinue(state, active.id, "가드레일로 생성이 차단되었습니다.", 1_000);
+
+  assert.equal(active.status, "failed");
+  assert.equal(active.resultAssets.length, 0);
+  assert.equal(active.error, "가드레일로 생성이 차단되었습니다.");
+  assert.equal(state.activeJobId, null);
+  assert.equal(state.status, "waiting");
+  assert.equal(state.jobs[1].status, "pending");
+  assert.equal(state.nextRunAt, 61_000);
+});
+
 test("only user-action Flow errors block unattended retries", () => {
   assert.equal(isBlockingFlowError("@nurse가 실제 캐릭터 참조 칩으로 연결되지 않았습니다."), false);
+  assert.equal(isBlockingFlowError("This prompt violates the safety guidelines."), false);
   assert.equal(isBlockingFlowError("Flow에서 CAPTCHA 사용자 확인이 필요합니다."), true);
   assert.equal(isBlockingFlowError("not enough credits"), true);
   assert.equal(isBlockingFlowError("Nano Banana 2 생성 일일 한도에 도달했습니다."), true);
@@ -110,8 +156,13 @@ test("queue summary counts completed images and overall progress", () => {
     { title: "one", prompt: "one" },
     { title: "two", prompt: "two" }
   ]);
+  state.characters = createCharacters([
+    { key: "hero", prompt: "hero" },
+    { key: "villain", prompt: "villain" }
+  ]);
   state.jobs[0].status = "completed";
   state.jobs[0].imagesGenerated = 2;
+  state.characters[0].status = "completed";
 
   assert.deepEqual(summarizeState(state), {
     total: 2,
@@ -120,11 +171,30 @@ test("queue summary counts completed images and overall progress", () => {
     pending: 1,
     generatedImages: 2,
     percent: 50,
-    charactersTotal: 0,
-    charactersCompleted: 0,
+    charactersTotal: 2,
+    charactersCompleted: 1,
     charactersFailed: 0,
-    charactersReview: 0
+    charactersReview: 0,
+    totalTasks: 4,
+    completedTasks: 2,
+    remainingTasks: 2
   });
+});
+
+test("queue summary reports total work from characters and scene jobs", () => {
+  const state = createInitialState();
+  state.characters = createCharacters(Array.from({ length: 5 }, (_, index) => ({
+    key: `character-${index + 1}`,
+    prompt: `character ${index + 1}`
+  })));
+  state.jobs = createJobs(Array.from({ length: 40 }, (_, index) => ({
+    title: `scene ${index + 1}`,
+    prompt: `scene ${index + 1}`
+  })));
+
+  assert.equal(summarizeState(state).totalTasks, 45);
+  assert.equal(summarizeState(state).completedTasks, 0);
+  assert.equal(summarizeState(state).remainingTasks, 45);
 });
 
 test("a Flow media scan replaces stale queue image counts", () => {
