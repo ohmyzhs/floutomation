@@ -9,8 +9,5 @@
   },
   "engines": {
     "node": ">=20"
-  },
-  "dependencies": {
-    "better-sqlite3": "^13.0.2"
   }
 }

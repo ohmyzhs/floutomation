@@ -1,0 +1,8 @@
+# Dependencies
+node_modules/
+
+# macOS metadata
+.DS_Store
+
+# Generated extension archives
+*.zip
