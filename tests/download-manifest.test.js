@@ -121,6 +121,60 @@ test("download manifest uses tracked asset IDs and labels intro and thumbnail jo
   ]);
 });
 
+test("download manifest keeps every actual result and numbers variable-size scenes", () => {
+  const state = createInitialState();
+  state.jobs = createJobs([
+    { number: 1, prompt: "one" },
+    { number: 2, prompt: "two" }
+  ]);
+  state.jobs[0].resultAssets = [
+    { assetId: "a-1", url: "https://example.test/a-1" }
+  ];
+  state.jobs[1].resultAssets = [
+    { assetId: "b-1", url: "https://example.test/b-1" },
+    { assetId: "b-2", url: "https://example.test/b-2" },
+    { assetId: "b-3", url: "https://example.test/b-3" },
+    { assetId: "b-4", url: "https://example.test/b-4" }
+  ];
+  const manifest = buildDownloadManifest({
+    state,
+    projectTitle: "project",
+    orderedSceneAssets: [...state.jobs.flatMap((job) => job.resultAssets)],
+    characterAssets: []
+  });
+  assert.deepEqual(manifest.entries.map((entry) => entry.filename), [
+    "Scene_Images/001-01.jpeg",
+    "Scene_Images/002-01.jpeg",
+    "Scene_Images/002-02.jpeg",
+    "Scene_Images/002-03.jpeg",
+    "Scene_Images/002-04.jpeg"
+  ]);
+  assert.deepEqual(manifest.sceneAssetCounts.map((entry) => entry.count), [1, 4]);
+  assert.deepEqual(manifest.missingScenes, []);
+});
+
+test("manual asset mapping overrides scan order and fixes the asset ID to one scene", () => {
+  const state = createInitialState();
+  state.jobs = createJobs([{ number: 1, prompt: "one" }, { number: 2, prompt: "two" }]);
+  state.jobs[0].mappedAssetIds = ["asset-3", "asset-1"];
+  state.jobs[1].resultAssets = [{ assetId: "asset-2", url: "https://example.test/2" }];
+  const manifest = buildDownloadManifest({
+    state,
+    projectTitle: "project",
+    orderedSceneAssets: [
+      { assetId: "asset-1", url: "https://example.test/1" },
+      { assetId: "asset-2", url: "https://example.test/2" },
+      { assetId: "asset-3", url: "https://example.test/3" }
+    ],
+    characterAssets: []
+  });
+  assert.deepEqual(manifest.entries.slice(0, 2).map((entry) => [entry.assetId, entry.filename]), [
+    ["asset-3", "Scene_Images/001-01.jpeg"],
+    ["asset-1", "Scene_Images/001-02.jpeg"]
+  ]);
+  assert.deepEqual(manifest.mappingWarnings, []);
+});
+
 test("download path segments remove file-system separators", () => {
   assert.equal(sanitizePathSegment('a/b:c*?"<>|'), "a-b-c------");
 });

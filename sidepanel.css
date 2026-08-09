@@ -313,6 +313,14 @@ textarea::placeholder { color: #aaa5b0; }
 .mapping-note strong { color: var(--purple-dark); }
 
 .job-list { display: grid; gap: 7px; }
+
+.asset-mapping-list { display: grid; gap: 7px; max-height: 420px; overflow: auto; }
+.asset-mapping-row { display: grid; grid-template-columns: 56px minmax(0, 1fr) 150px; align-items: center; gap: 9px; padding: 7px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.7); }
+.asset-mapping-row img { width: 56px; height: 42px; object-fit: cover; border-radius: 7px; background: var(--purple-soft); }
+.asset-mapping-copy { min-width: 0; display: grid; gap: 3px; }
+.asset-mapping-copy strong { color: var(--purple); font-size: 11px; }
+.asset-mapping-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 9px; }
+.asset-mapping-row select { min-width: 0; width: 100%; padding: 8px 7px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: #fff; font-size: 10px; }
 .empty-state { padding: 24px 10px; border: 1px dashed var(--line); border-radius: 12px; text-align: center; color: #aaa4b0; }
 .empty-state span { font-size: 20px; }
 .empty-state p { margin: 7px 0 0; font-size: 10px; line-height: 1.5; }

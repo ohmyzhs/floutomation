@@ -10,6 +10,7 @@ const elements = Object.fromEntries(
     "analysisSummary", "detectedJobCount", "detectedImageCount", "detectedCharacterCount", "analysisWarning",
     "applyQueueButton", "applyQueueButtonHint", "applyQueueReason", "modelSelect", "aspectRatioSelect", "imageCountSelect", "delayRange", "delayValue", "delayValueLabel", "randomDelayToggle", "randomDelayDescription",
     "characterSection", "characterListCaption", "characterList", "syncCharactersButton", "jobListCaption", "jobList", "retryFailedButton",
+    "assetMappingSection", "assetMappingCaption", "assetMappingList", "scanAssetsButton",
     "downloadProjectButton", "downloadProgress", "downloadProgressBar", "downloadStatus",
     "startButton", "startButtonHint", "pauseButton", "resumeButton", "retryFailedFooterButton", "resetButton", "queueControlReason", "toast"
   ].map((id) => [id, document.getElementById(id)])
@@ -272,6 +273,36 @@ function renderCharacters() {
   `).join("");
 }
 
+function renderAssetMapping() {
+  const catalog = Array.isArray(state.assetCatalog) ? state.assetCatalog : [];
+  const jobs = (state.jobs || []).filter((job) => !["character"].includes(job.sourceMode));
+  const mappedById = new Map();
+  jobs.forEach((job) => (job.mappedAssetIds || []).forEach((id) => mappedById.set(String(id), job.id)));
+  const canEdit = !state.activeJobId && !["running", "waiting", "pausing"].includes(state.status);
+  elements.assetMappingCaption.textContent = catalog.length
+    ? `${catalog.length}개 이미지 · asset ID 기준 고정 매핑`
+    : "Flow asset ID를 장면에 고정합니다";
+  elements.scanAssetsButton.disabled = !canEdit;
+  if (!catalog.length) {
+    elements.assetMappingList.innerHTML = '<div class="empty-state compact-empty"><span>↔</span><p>Flow 목록을 새로고침하면<br />매핑할 이미지가 표시됩니다.</p></div>';
+    return;
+  }
+  const jobLabel = (job) => {
+    const mode = job.sourceMode === "thumbnail" ? "썸네일" : job.sourceMode === "intro" ? `인트로 ${job.sourceNumber || job.number}` : `장면 ${String(job.sourceNumber || job.number).padStart(3, "0")}`;
+    return `${mode} · ${job.title || "프롬프트"}`;
+  };
+  elements.assetMappingList.innerHTML = catalog.map((asset, index) => {
+    const key = asset.assetId || asset.detailUrl || asset.url;
+    const selectedJobId = mappedById.get(key) || "";
+    const options = [`<option value="">미지정</option>`].concat(jobs.map((job) => `<option value="${escapeHtml(job.id)}" ${selectedJobId === job.id ? "selected" : ""}>${escapeHtml(jobLabel(job))}</option>`));
+    return `<div class="asset-mapping-row">
+      <img src="${escapeHtml(asset.url)}" alt="Flow 이미지 ${index + 1}" loading="lazy" />
+      <div class="asset-mapping-copy"><strong>${String(index + 1).padStart(3, "0")}</strong><small title="${escapeHtml(key)}">${escapeHtml(key)}</small></div>
+      <select data-map-asset="${escapeHtml(key)}" aria-label="Flow 이미지 ${index + 1} 장면 매핑" ${canEdit ? "" : "disabled"}>${options.join("")}</select>
+    </div>`;
+  }).join("");
+}
+
 function renderState() {
   state = hydrateState(state);
   const summary = summarizeState(state);
@@ -375,6 +406,7 @@ function renderState() {
 
   renderJobs();
   renderCharacters();
+  renderAssetMapping();
 }
 
 function renderAnalysis() {
@@ -602,17 +634,19 @@ elements.downloadProjectButton.addEventListener("click", withUiError(async () =>
       result.missingCharacters?.length ? `캐릭터 ${result.missingCharacters.join(", ")}` : ""
     ].filter(Boolean);
     elements.downloadProgressBar.style.width = "100%";
+    const mappedCount = Number(result.mappedSceneCount ?? result.scannedSceneCount ?? 0);
     const totalMedia = result.removedCharacterMediaCount
-      ? `전체 ${result.allMediaCount}장 → 작업 ${result.scannedSceneCount}/${result.expectedSceneCount}장`
-      : `카드 ${result.scannedSceneCount}/${result.expectedSceneCount}장`;
+      ? `전체 ${result.allMediaCount}장 → 매핑 ${mappedCount}장`
+      : `카드 ${result.scannedSceneCount}장 · 매핑 ${mappedCount}장`;
     const extras = result.extraSceneCount ? ` · 추가 카드 ${result.extraSceneCount}장 제외` : "";
+    const mappingWarnings = result.mappingWarnings?.length ? ` · 매핑 확인 ${result.mappingWarnings.length}건` : "";
     const types = [
       result.sceneCount ? `장면 ${result.sceneCount}장` : "",
       result.introCount ? `인트로 ${result.introCount}장` : "",
       result.thumbnailCount ? `썸네일 ${result.thumbnailCount}장` : "",
       result.characterCount ? `캐릭터 ${result.characterCount}장` : ""
     ].filter(Boolean).join(" · ");
-    elements.downloadStatus.textContent = `${result.archiveFilename} · ${totalMedia} · ${types}${extras}${missing.length ? ` · 미확인 ${missing.join(" / ")}` : ""}`;
+    elements.downloadStatus.textContent = `${result.archiveFilename} · ${totalMedia} · ${types}${extras}${mappingWarnings}${missing.length ? ` · 미확인 ${missing.join(" / ")}` : ""}`;
     showToast(`${result.downloaded}개 이미지를 ZIP 파일 하나로 저장했습니다.`);
   } catch (error) {
     const message = String(error?.message || error);
@@ -707,6 +741,26 @@ elements.jobList.addEventListener("change", withUiError(async (event) => {
   });
   renderState();
   showToast(checkbox.checked ? "선택한 장면 작업을 건너뜁니다." : "선택한 장면 작업부터 다시 생성할 수 있습니다.");
+}));
+elements.scanAssetsButton.addEventListener("click", withUiError(async () => {
+  const result = await send("SCAN_PROJECT_ASSETS");
+  state = result.state;
+  renderState();
+  showToast(`Flow 이미지 ${result.assetCount}개를 읽었습니다. 장면별로 매핑할 수 있습니다.`);
+}));
+elements.assetMappingList.addEventListener("change", withUiError(async (event) => {
+  const select = event.target.closest("[data-map-asset]");
+  if (!select) return;
+  const assetId = select.dataset.mapAsset;
+  if (select.value) {
+    state = await send("MAP_ASSET_TO_JOB", { assetId, jobId: select.value });
+    showToast("이미지를 선택한 장면에 고정 매핑했습니다.");
+  } else {
+    const current = (state.jobs || []).find((job) => (job.mappedAssetIds || []).includes(assetId));
+    state = await send("UNMAP_ASSET_FROM_JOB", { assetId, jobId: current?.id || "" });
+    showToast("이미지 매핑을 해제했습니다.");
+  }
+  renderState();
 }));
 elements.characterList.addEventListener("click", withUiError(async (event) => {
   const retryButton = event.target.closest("[data-retry-character]");

@@ -656,7 +656,7 @@
     return new Set(captureLargeMediaAssets().keys());
   }
 
-  function newDownloadableAssets(mediaAssets, baselineMedia, expectedImages) {
+  function newDownloadableAssets(mediaAssets, baselineMedia) {
     const seen = new Set();
     const assets = [];
     for (const [fingerprint, asset] of mediaAssets) {
@@ -665,7 +665,9 @@
       seen.add(identity);
       assets.push(asset);
     }
-    return assets.slice(0, Math.max(1, Number(expectedImages || 2)));
+    // Flow may return a different number of cards than the requested batch size.
+    // Keep every new asset; the immutable assetId is what binds it to this job.
+    return assets;
   }
 
   function captureCompletionSignals() {
@@ -814,7 +816,7 @@
       if (error) throw new Error(error);
 
       const currentMediaAssets = captureLargeMediaAssets();
-      const resultAssets = newDownloadableAssets(currentMediaAssets, baselineMedia, expectedImages);
+      const resultAssets = newDownloadableAssets(currentMediaAssets, baselineMedia);
       const detectedImages = resultAssets.length;
       if (detectedImages !== lastDetectedCount) {
         lastDetectedCount = detectedImages;

@@ -588,7 +588,9 @@ async function completeTask(taskId, taskType, imagesGenerated, assets = []) {
     }
     else {
       task.imagesGenerated = Math.max(0, Number(imagesGenerated || draft.options.imagesPerPrompt));
-      task.resultAssets = uniqueAssets([...(task.resultAssets || []), ...decorateTaskAssets(task, assets)]).slice(0, draft.options.imagesPerPrompt);
+      // Preserve every asset Flow reported for this job. A prompt can produce
+      // 1, 3, or 4 cards even when the requested batch size is different.
+      task.resultAssets = uniqueAssets([...(task.resultAssets || []), ...decorateTaskAssets(task, assets)]);
       task.generationPercentages = [];
       task.baselineMedia = [];
       task.baselineCapturedAt = null;
@@ -953,7 +955,7 @@ async function handleFlowEvent(message, sender) {
         job.resultAssets = uniqueAssets([
           ...job.resultAssets,
           ...decorateTaskAssets(job, message.assets)
-        ]).slice(0, state.options.imagesPerPrompt);
+        ]);
       }
       if (message.requestSubmittedAt) job.requestSubmittedAt = Number(message.requestSubmittedAt);
       if (message.generationMode) job.generationMode = String(message.generationMode);
@@ -1112,6 +1114,7 @@ async function downloadProject() {
       }
       draft.tabId = mainTab.id;
       draft.flowConnected = true;
+      draft.assetCatalog = uniqueAssets(scan.sceneAssets || []);
       draft.lastFlowSceneImageCount = Array.isArray(scan.sceneAssets) ? scan.sceneAssets.length : null;
       draft.lastFlowImageSyncAt = Date.now();
     });
@@ -1160,8 +1163,11 @@ async function downloadProject() {
       missingThumbnails: manifest.missingThumbnails,
       missingCharacters: manifest.missingCharacters,
       scannedSceneCount: manifest.scannedSceneCount,
+      mappedSceneCount: manifest.mappedSceneCount,
       expectedSceneCount: manifest.expectedSceneCount,
       extraSceneCount: manifest.extraSceneCount,
+      mappingWarnings: manifest.mappingWarnings,
+      sceneAssetCounts: manifest.sceneAssetCounts,
       allMediaCount: Number(scan.allMediaCount || manifest.scannedSceneCount),
       removedCharacterMediaCount: Number(scan.removedCharacterMediaCount || 0),
       failures: []
@@ -1172,10 +1178,75 @@ async function downloadProject() {
   }
 }
 
+async function scanProjectAssets() {
+  const current = await readState();
+  if (current.activeJobId || ["running", "waiting", "pausing"].includes(current.status)) {
+    throw new Error("이미지 생성 중에는 매핑 목록을 갱신할 수 없습니다.");
+  }
+  const mainTab = await findFlowTab(current.tabId);
+  if (!mainTab?.id) throw new Error("이미지를 가져올 Google Flow 프로젝트 탭이 없습니다.");
+  const scan = await sendToTab(mainTab.id, {
+    type: "SCAN_FLOW_PROJECT_ASSETS",
+    characterKeys: current.characters.map((character) => character.key)
+  });
+  if (!scan?.ready) throw new Error(scan?.error || "Flow 프로젝트의 이미지 URL을 수집하지 못했습니다.");
+  const state = await updateState((draft) => {
+    draft.assetCatalog = uniqueAssets(scan.sceneAssets || []);
+    draft.tabId = mainTab.id;
+    draft.flowConnected = true;
+    draft.lastFlowSceneImageCount = draft.assetCatalog.length;
+    draft.lastFlowImageSyncAt = Date.now();
+  });
+  return { state, assetCount: state.assetCatalog.length, projectTitle: scan.projectTitle };
+}
+
+function assertMappingReady(state) {
+  if (state.activeJobId || ["running", "waiting", "pausing"].includes(state.status)) {
+    throw new Error("이미지 생성 중에는 매핑을 변경할 수 없습니다.");
+  }
+}
+
+async function mapAssetToJob(assetId, jobId) {
+  const normalizedAssetId = String(assetId || "").trim();
+  if (!normalizedAssetId) throw new Error("매핑할 asset ID가 없습니다.");
+  return updateState((state) => {
+    assertMappingReady(state);
+    if (!state.assetCatalog.some((asset) => asset.assetId === normalizedAssetId || asset.detailUrl === normalizedAssetId || asset.url === normalizedAssetId)) {
+      throw new Error("현재 Flow 미디어 목록에서 해당 이미지를 찾지 못했습니다. 먼저 이미지 목록을 새로고침하세요.");
+    }
+    const target = state.jobs.find((job) => job.id === jobId);
+    if (!target) throw new Error("매핑할 장면을 찾지 못했습니다.");
+    const asset = state.assetCatalog.find((entry) => entry.assetId === normalizedAssetId || entry.detailUrl === normalizedAssetId || entry.url === normalizedAssetId);
+    const key = asset.assetId || asset.detailUrl || asset.url;
+    for (const job of state.jobs) {
+      job.mappedAssetIds = (job.mappedAssetIds || []).filter((id) => id !== key);
+    }
+    target.mappedAssetIds = [...(target.mappedAssetIds || []), key];
+    target.error = null;
+  });
+}
+
+async function unmapAssetFromJob(assetId, jobId) {
+  const key = String(assetId || "").trim();
+  return updateState((state) => {
+    assertMappingReady(state);
+    const target = state.jobs.find((job) => job.id === jobId);
+    if (target) {
+      target.mappedAssetIds = (target.mappedAssetIds || []).filter((id) => id !== key);
+      return;
+    }
+    for (const job of state.jobs) job.mappedAssetIds = (job.mappedAssetIds || []).filter((id) => id !== key);
+  });
+}
+
 async function handleUiMessage(message) {
   if (message.type === "GET_STATE") return readState();
 
   if (message.type === "DOWNLOAD_PROJECT") return downloadProject();
+
+  if (message.type === "SCAN_PROJECT_ASSETS") return scanProjectAssets();
+  if (message.type === "MAP_ASSET_TO_JOB") return mapAssetToJob(message.assetId, message.jobId);
+  if (message.type === "UNMAP_ASSET_FROM_JOB") return unmapAssetFromJob(message.assetId, message.jobId);
 
   if (message.type === "SET_QUEUE") {
     await chrome.alarms.clear(QUEUE_ALARM);
@@ -1210,6 +1281,11 @@ async function handleUiMessage(message) {
       state.characters = characters;
       state.queueMode = isIntroQueue ? "intro" : "scene";
       state.executionMode = "automatic";
+      if (flowProject?.projectId && state.flowProjectId && state.flowProjectId !== flowProject.projectId) {
+        // Asset IDs are project-scoped; never expose the previous project's
+        // catalog as if it belonged to the newly selected queue.
+        state.assetCatalog = [];
+      }
       state.lastFlowSceneImageCount = null;
       state.lastFlowImageSyncAt = null;
       state.status = "idle";
@@ -1229,6 +1305,7 @@ async function handleUiMessage(message) {
         state.tabId = null;
         state.flowProjectId = "";
         state.flowProjectTitle = "";
+        state.assetCatalog = [];
       }
     });
     await archiveProjectCharacters(nextState);
