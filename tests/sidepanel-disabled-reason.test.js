@@ -58,3 +58,10 @@ test("job cards expose every tracked result as a numbered thumbnail button", () 
   assert.match(source, /#\$\{assetIndex \+ 1\}/);
   assert.match(source, /OPEN_IMAGE/);
 });
+
+test("asset mapping reflects automatic and manual job assignments", () => {
+  assert.match(source, /job\.resultAssets/);
+  assert.match(source, /source: "auto"/);
+  assert.match(source, /source: "manual"/);
+  assert.match(source, /asset-mapping-source/);
+});

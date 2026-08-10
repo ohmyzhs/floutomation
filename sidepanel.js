@@ -299,7 +299,15 @@ function renderAssetMapping() {
   const catalog = Array.isArray(state.assetCatalog) ? state.assetCatalog : [];
   const jobs = (state.jobs || []).filter((job) => !["character"].includes(job.sourceMode));
   const mappedById = new Map();
-  jobs.forEach((job) => (job.mappedAssetIds || []).forEach((id) => mappedById.set(String(id), job.id)));
+  const assetKeys = (asset) => [asset?.assetId, asset?.detailUrl, asset?.url].map((key) => String(key || "").trim()).filter(Boolean);
+  jobs.forEach((job) => {
+    (job.resultAssets || []).forEach((asset) => assetKeys(asset).forEach((key) => {
+      if (!mappedById.has(key)) mappedById.set(key, { jobId: job.id, source: "auto" });
+    }));
+  });
+  jobs.forEach((job) => (job.mappedAssetIds || []).forEach((id) => {
+    mappedById.set(String(id), { jobId: job.id, source: "manual" });
+  }));
   const canEdit = !state.activeJobId && !["running", "waiting", "pausing"].includes(state.status);
   elements.assetMappingCaption.textContent = catalog.length
     ? `${catalog.length}개 이미지 · asset ID 기준 고정 매핑`
@@ -315,11 +323,12 @@ function renderAssetMapping() {
   };
   elements.assetMappingList.innerHTML = catalog.map((asset, index) => {
     const key = asset.assetId || asset.detailUrl || asset.url;
-    const selectedJobId = mappedById.get(key) || "";
+    const assignment = mappedById.get(key);
+    const selectedJobId = assignment?.jobId || "";
     const options = [`<option value="">미지정</option>`].concat(jobs.map((job) => `<option value="${escapeHtml(job.id)}" ${selectedJobId === job.id ? "selected" : ""}>${escapeHtml(jobLabel(job))}</option>`));
     return `<div class="asset-mapping-row">
       <img src="${escapeHtml(asset.url)}" alt="Flow 이미지 ${index + 1}" loading="lazy" />
-      <div class="asset-mapping-copy"><strong>${String(index + 1).padStart(3, "0")}</strong><small title="${escapeHtml(key)}">${escapeHtml(key)}</small></div>
+      <div class="asset-mapping-copy"><strong>${String(index + 1).padStart(3, "0")} ${assignment ? `<em class="asset-mapping-source">${assignment.source === "manual" ? "수동" : "자동"}</em>` : ""}</strong><small title="${escapeHtml(key)}">${escapeHtml(key)}</small></div>
       <select data-map-asset="${escapeHtml(key)}" aria-label="Flow 이미지 ${index + 1} 장면 매핑" ${canEdit ? "" : "disabled"}>${options.join("")}</select>
     </div>`;
   }).join("");

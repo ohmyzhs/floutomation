@@ -1252,6 +1252,9 @@ async function mapAssetToJob(assetId, jobId) {
     const key = asset.assetId || asset.detailUrl || asset.url;
     for (const job of state.jobs) {
       job.mappedAssetIds = (job.mappedAssetIds || []).filter((id) => id !== key);
+      if (job.id !== target.id) {
+        job.resultAssets = (job.resultAssets || []).filter((entry) => ![entry.assetId, entry.detailUrl, entry.url].includes(key));
+      }
     }
     target.mappedAssetIds = [...(target.mappedAssetIds || []), key];
     target.error = null;
@@ -1265,9 +1268,13 @@ async function unmapAssetFromJob(assetId, jobId) {
     const target = state.jobs.find((job) => job.id === jobId);
     if (target) {
       target.mappedAssetIds = (target.mappedAssetIds || []).filter((id) => id !== key);
+      target.resultAssets = (target.resultAssets || []).filter((entry) => ![entry.assetId, entry.detailUrl, entry.url].includes(key));
       return;
     }
-    for (const job of state.jobs) job.mappedAssetIds = (job.mappedAssetIds || []).filter((id) => id !== key);
+    for (const job of state.jobs) {
+      job.mappedAssetIds = (job.mappedAssetIds || []).filter((id) => id !== key);
+      job.resultAssets = (job.resultAssets || []).filter((entry) => ![entry.assetId, entry.detailUrl, entry.url].includes(key));
+    }
   });
 }
 
