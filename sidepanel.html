@@ -209,11 +209,16 @@
                 <input id="unassignedOnlyToggle" type="checkbox" />
                 <span>미지정만 보기</span>
               </label>
-              <button id="autoMapAssetsButton" class="text-button auto-map-button" type="button" disabled>남은 이미지 자동채우기</button>
               <button id="scanAssetsButton" class="text-button" type="button">Flow 목록 새로고침</button>
             </div>
           </div>
           <p class="mapping-note">자동 생성 결과는 작업별 asset ID를 우선 사용합니다. 결과가 섞였거나 수동으로 만든 이미지는 아래 목록에서 장면을 지정하면 해당 ID로 고정됩니다. 한 이미지는 한 장면에만 매핑됩니다.</p>
+          <div class="asset-range-fill-controls">
+            <label><span>시작 이미지</span><select id="fillFromAssetSelect" aria-label="재지정 시작 이미지"></select></label>
+            <label><span>시작 장면</span><select id="fillFromJobSelect" aria-label="재지정 시작 장면"></select></label>
+            <button id="fillAssetRangeButton" class="asset-range-fill-button" type="button" disabled>이후 번호대로 재지정</button>
+            <p>선택한 이미지·장면부터 아래 매핑을 초기화하고 번호 순서대로 다시 지정합니다.</p>
+          </div>
           <div id="assetMappingList" class="asset-mapping-list">
             <div class="empty-state compact-empty"><span>↔</span><p>Flow 목록을 새로고침하면<br />매핑할 이미지가 표시됩니다.</p></div>
           </div>

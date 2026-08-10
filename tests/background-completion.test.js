@@ -31,6 +31,13 @@ test("background validates and opens a tracked Flow asset detail", () => {
   assert.match(backgroundSource, /chrome\.tabs\.create/);
 });
 
+test("background supports explicit suffix asset remapping", () => {
+  assert.match(backgroundSource, /REASSIGN_ASSETS_FROM_POSITION/);
+  assert.match(backgroundSource, /buildAssetSuffixAssignments/);
+  assert.match(backgroundSource, /job\.mappedAssetIds = \[\]/);
+  assert.match(backgroundSource, /job\.resultAssets = \[\]/);
+});
+
 test("scene failure handling finalizes after one retry and keeps the queue moving", () => {
   assert.match(backgroundSource, /canAutomaticallyRetry/);
   assert.match(backgroundSource, /markSceneFailedAndContinue/);

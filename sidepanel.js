@@ -10,7 +10,7 @@ const elements = Object.fromEntries(
     "analysisSummary", "detectedJobCount", "detectedImageCount", "detectedCharacterCount", "analysisWarning",
     "applyQueueButton", "applyQueueButtonHint", "applyQueueReason", "modelSelect", "aspectRatioSelect", "imageCountSelect", "delayRange", "delayValue", "delayValueLabel", "randomDelayToggle", "randomDelayDescription",
     "characterSection", "characterListCaption", "characterList", "syncCharactersButton", "jobListCaption", "jobList", "retryFailedButton",
-    "assetMappingSection", "assetMappingCaption", "assetMappingList", "scanAssetsButton", "autoMapAssetsButton", "unassignedOnlyToggle",
+    "assetMappingSection", "assetMappingCaption", "assetMappingList", "scanAssetsButton", "unassignedOnlyToggle", "fillFromAssetSelect", "fillFromJobSelect", "fillAssetRangeButton",
     "downloadProjectButton", "downloadProgress", "downloadProgressBar", "downloadStatus",
     "startButton", "startButtonHint", "pauseButton", "resumeButton", "retryFailedFooterButton", "resetButton", "queueControlReason", "toast"
   ].map((id) => [id, document.getElementById(id)])
@@ -28,6 +28,8 @@ let sourceSaveTimer = null;
 let downloadBusy = false;
 let flowCheckInFlight = false;
 let showUnassignedOnly = false;
+let mappingStartAssetKey = "";
+let mappingStartJobId = "";
 
 const PROMPT_DRAFT_KEYS = [
   "flowBatchPromptDraft",
@@ -348,10 +350,21 @@ function renderAssetMapping() {
     ? `${catalog.length}개 이미지 · 미지정 ${unassignedCount}개${orphanAssignments.length ? ` · 오래된 연결 ${orphanAssignments.length}개` : ""}`
     : orphanAssignments.length ? `Flow 목록 외 연결 ${orphanAssignments.length}개` : "Flow asset ID를 장면에 고정합니다";
   elements.scanAssetsButton.disabled = !canEdit;
-  elements.autoMapAssetsButton.disabled = !canEdit || !catalog.length || !jobs.length || unassignedCount === 0;
-  elements.autoMapAssetsButton.title = unassignedCount
-    ? "기존 연결은 유지하고 미지정 이미지를 번호 순서대로 채웁니다"
-    : "미지정 Flow 이미지가 없습니다";
+  const fillAssetOptions = catalog.map((asset, index) => {
+    const key = asset.assetId || asset.detailUrl || asset.url;
+    return `<option value="${escapeHtml(key)}" ${mappingStartAssetKey === key ? "selected" : ""}>${String(index + 1).padStart(3, "0")} · ${escapeHtml(String(key).slice(0, 18))}</option>`;
+  }).join("");
+  const fillJobOptions = jobs.map((job) => `<option value="${escapeHtml(job.id)}" ${mappingStartJobId === job.id ? "selected" : ""}>${escapeHtml(jobLabel(job))}</option>`).join("");
+  if (!catalog.some((asset) => (asset.assetId || asset.detailUrl || asset.url) === mappingStartAssetKey)) mappingStartAssetKey = catalog[0]?.assetId || catalog[0]?.detailUrl || catalog[0]?.url || "";
+  if (!jobs.some((job) => job.id === mappingStartJobId)) mappingStartJobId = jobs[0]?.id || "";
+  elements.fillFromAssetSelect.innerHTML = fillAssetOptions;
+  elements.fillFromJobSelect.innerHTML = fillJobOptions;
+  elements.fillFromAssetSelect.value = mappingStartAssetKey;
+  elements.fillFromJobSelect.value = mappingStartJobId;
+  elements.fillFromAssetSelect.disabled = !canEdit || !catalog.length;
+  elements.fillFromJobSelect.disabled = !canEdit || !jobs.length;
+  elements.fillAssetRangeButton.disabled = !canEdit || !catalog.length || !jobs.length || !mappingStartAssetKey || !mappingStartJobId;
+  elements.fillAssetRangeButton.title = "선택한 이미지와 장면부터 이후 매핑을 번호 순서대로 다시 지정합니다";
   elements.unassignedOnlyToggle.checked = showUnassignedOnly;
   elements.unassignedOnlyToggle.disabled = !catalog.length;
   if (!catalog.length) {
@@ -837,13 +850,20 @@ elements.scanAssetsButton.addEventListener("click", withUiError(async () => {
   renderState();
   showToast(`Flow 이미지 ${result.assetCount}개를 읽었습니다.${result.removedMappings ? ` 삭제된 이미지 매핑 ${result.removedMappings}건을 해제했습니다.` : " 장면별로 매핑할 수 있습니다."}`);
 }));
-elements.autoMapAssetsButton.addEventListener("click", withUiError(async () => {
-  const result = await send("AUTO_MAP_REMAINING_ASSETS");
+elements.fillFromAssetSelect.addEventListener("change", () => {
+  mappingStartAssetKey = elements.fillFromAssetSelect.value;
+});
+elements.fillFromJobSelect.addEventListener("change", () => {
+  mappingStartJobId = elements.fillFromJobSelect.value;
+});
+elements.fillAssetRangeButton.addEventListener("click", withUiError(async () => {
+  const result = await send("REASSIGN_ASSETS_FROM_POSITION", {
+    startAssetKey: mappingStartAssetKey,
+    startJobId: mappingStartJobId
+  });
   state = result.state;
   renderState();
-  showToast(result.mappedCount
-    ? `미지정 이미지 ${result.mappedCount}개를 번호 순서대로 자동 매핑했습니다.`
-    : "추가로 자동 매핑할 미지정 이미지가 없습니다.");
+  showToast(`선택한 시작점부터 ${result.mappedCount}개 이미지를 번호 순서대로 다시 매핑했습니다.`);
 }));
 elements.unassignedOnlyToggle.addEventListener("change", () => {
   showUnassignedOnly = elements.unassignedOnlyToggle.checked;

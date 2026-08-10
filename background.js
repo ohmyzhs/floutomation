@@ -27,7 +27,7 @@ import {
   buildDownloadManifest,
   uniqueAssets
 } from "./lib/download-manifest.js";
-import { buildRemainingAssetAssignments } from "./lib/asset-mapping.js";
+import { assetAliases, buildAssetSuffixAssignments } from "./lib/asset-mapping.js";
 import { requireArchiveResult } from "./lib/archive-result.js";
 import {
   PROJECT_HISTORY_KEY,
@@ -1287,24 +1287,41 @@ async function unmapAssetFromJob(assetId, jobId) {
   });
 }
 
-async function autoMapRemainingAssets() {
-  let assignments = [];
+async function reassignAssetsFromPosition(startAssetKey, startJobId) {
+  let plan;
   const state = await updateState((draft) => {
     assertMappingReady(draft);
-    assignments = buildRemainingAssetAssignments({
+    plan = buildAssetSuffixAssignments({
       catalog: draft.assetCatalog,
       jobs: draft.jobs,
+      startAssetKey,
+      startJobId,
       imagesPerPrompt: draft.options.imagesPerPrompt
     });
     const jobsById = new Map((draft.jobs || []).map((job) => [job.id, job]));
-    assignments.forEach(({ assetKey, jobId }) => {
+    const suffixAliases = new Set();
+    (draft.assetCatalog || []).forEach((asset) => {
+      const key = asset.assetId || asset.detailUrl || asset.url;
+      if (plan.suffixAssetKeys.has(key)) assetAliases(asset).forEach((alias) => suffixAliases.add(alias));
+    });
+    (draft.jobs || []).forEach((job) => {
+      if (plan.targetJobIds.has(job.id)) {
+        job.mappedAssetIds = [];
+        job.resultAssets = [];
+        job.resultAssetOverflowCount = 0;
+        return;
+      }
+      job.mappedAssetIds = (job.mappedAssetIds || []).filter((id) => !suffixAliases.has(String(id).trim()));
+      job.resultAssets = (job.resultAssets || []).filter((asset) => !assetAliases(asset).some((alias) => suffixAliases.has(alias)));
+    });
+    plan.assignments.forEach(({ assetKey, jobId }) => {
       const job = jobsById.get(jobId);
       if (!job) return;
       if (!(job.mappedAssetIds || []).includes(assetKey)) job.mappedAssetIds = [...(job.mappedAssetIds || []), assetKey];
       job.error = null;
     });
   });
-  return { state, mappedCount: assignments.length };
+  return { state, mappedCount: plan.assignments.length, startAssetIndex: plan.startAssetIndex, startJobIndex: plan.startJobIndex };
 }
 
 async function handleUiMessage(message) {
@@ -1315,7 +1332,7 @@ async function handleUiMessage(message) {
   if (message.type === "SCAN_PROJECT_ASSETS") return scanProjectAssets();
   if (message.type === "MAP_ASSET_TO_JOB") return mapAssetToJob(message.assetId, message.jobId);
   if (message.type === "UNMAP_ASSET_FROM_JOB") return unmapAssetFromJob(message.assetId, message.jobId);
-  if (message.type === "AUTO_MAP_REMAINING_ASSETS") return autoMapRemainingAssets();
+  if (message.type === "REASSIGN_ASSETS_FROM_POSITION") return reassignAssetsFromPosition(message.startAssetKey, message.startJobId);
 
   if (message.type === "SET_QUEUE") {
     await chrome.alarms.clear(QUEUE_ALARM);

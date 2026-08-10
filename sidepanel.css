@@ -172,7 +172,13 @@ main { padding: 14px; display: grid; gap: 12px; }
 .section-heading div div p { margin: 3px 0 0; color: var(--muted); font-size: 10px; }
 
 .text-button { padding: 5px; border: 0; background: transparent; color: var(--purple); font-size: 11px; font-weight: 700; white-space: nowrap; }
-.auto-map-button { color: var(--green); }
+.asset-range-fill-controls { display: grid; grid-template-columns: 1fr 1fr auto; align-items: end; gap: 7px; margin: 10px 0; padding: 9px; border: 1px solid #eadfc8; border-radius: 11px; background: #fffaf1; }
+.asset-range-fill-controls label { display: grid; gap: 4px; min-width: 0; }
+.asset-range-fill-controls label span { color: #8c671f; font-size: 9px; font-weight: 800; }
+.asset-range-fill-controls select { min-width: 0; width: 100%; padding: 7px 6px; border: 1px solid #eadfc8; border-radius: 7px; color: var(--ink); background: #fff; font-size: 9px; }
+.asset-range-fill-button { min-height: 30px; padding: 6px 8px; border: 0; border-radius: 7px; color: #fff; background: #b47d1b; font-size: 9px; font-weight: 800; white-space: nowrap; }
+.asset-range-fill-button:hover:not(:disabled) { background: #996714; }
+.asset-range-fill-controls p { grid-column: 1 / -1; margin: 0; color: #9a6a16; font-size: 9px; line-height: 1.35; }
 
 .mode-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin: 0 0 8px; padding: 4px; border: 1px solid var(--line); border-radius: 11px; background: #f7f5fb; }
 .mode-button { min-height: 32px; border: 0; border-radius: 8px; color: var(--muted); background: transparent; font-size: 10px; font-weight: 800; }
