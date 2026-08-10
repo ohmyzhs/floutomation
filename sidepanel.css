@@ -325,7 +325,8 @@ textarea::placeholder { color: #aaa5b0; }
 .empty-state span { font-size: 20px; }
 .empty-state p { margin: 7px 0 0; font-size: 10px; line-height: 1.5; }
 
-.job-item { position: relative; padding: 10px; overflow: hidden; border: 1px solid var(--line); border-radius: 11px; background: #fff; }
+.job-item { position: relative; padding: 10px; overflow: visible; border: 1px solid var(--line); border-radius: 11px; background: #fff; }
+.job-item:has(.job-asset-button:hover), .job-item:has(.job-asset-button:focus-visible) { z-index: 10; }
 .job-row { display: grid; grid-template-columns: 26px 1fr auto; align-items: center; gap: 8px; }
 .job-number { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 8px; color: #777180; background: #f2f0f5; font-size: 10px; font-weight: 800; }
 .job-copy { min-width: 0; }
@@ -346,11 +347,15 @@ textarea::placeholder { color: #aaa5b0; }
 .job-action-group { display: flex; align-items: center; gap: 5px; }
 .job-action-group + .job-action-group { padding-left: 8px; border-left: 1px solid #eeeaf2; }
 .job-work-actions { min-width: 0; flex-wrap: wrap; }
-.job-assets { display: flex; align-items: center; gap: 3px; max-width: 190px; overflow-x: auto; padding: 1px 0; }
-.job-asset-button { position: relative; display: grid; place-items: end center; width: 30px; height: 30px; flex: 0 0 30px; overflow: hidden; padding: 0; border: 1px solid #dcd5fa; border-radius: 7px; color: #fff; background: var(--purple-soft); cursor: pointer; }
-.job-asset-button img { width: 100%; height: 100%; object-fit: cover; }
-.job-asset-button span { position: absolute; right: 2px; bottom: 2px; padding: 1px 3px; border-radius: 4px; color: #fff; background: rgba(36, 28, 65, .78); font-size: 7px; font-weight: 800; line-height: 1.1; }
+.job-assets { display: flex; align-items: center; gap: 3px; max-width: 190px; flex-wrap: wrap; padding: 1px 0; }
+.job-asset-button { position: relative; display: grid; place-items: end center; width: 30px; height: 30px; flex: 0 0 30px; overflow: visible; padding: 0; border: 1px solid #dcd5fa; border-radius: 7px; color: #fff; background: var(--purple-soft); cursor: pointer; z-index: 1; }
+.job-asset-button .job-asset-thumb { width: 100%; height: 100%; object-fit: cover; border-radius: 6px; }
+.job-asset-button > span:not(.job-asset-preview) { position: absolute; right: 2px; bottom: 2px; padding: 1px 3px; border-radius: 4px; color: #fff; background: rgba(36, 28, 65, .78); font-size: 7px; font-weight: 800; line-height: 1.1; }
 .job-asset-button:hover { border-color: var(--purple); transform: translateY(-1px); }
+.job-asset-button:hover, .job-asset-button:focus-visible { z-index: 20; }
+.job-asset-preview { position: absolute; left: 50%; bottom: calc(100% + 8px); display: block; width: 190px; height: 118px; padding: 4px; border: 1px solid #dcd5fa; border-radius: 10px; background: #fff; box-shadow: 0 10px 26px rgba(43, 31, 74, .24); opacity: 0; pointer-events: none; transform: translate(-50%, 5px) scale(.96); transition: opacity 120ms ease, transform 120ms ease; }
+.job-asset-preview img { display: block; width: 100%; height: 100%; object-fit: cover; border-radius: 7px; }
+.job-asset-button:hover .job-asset-preview, .job-asset-button:focus-visible .job-asset-preview { opacity: 1; transform: translate(-50%, 0) scale(1); }
 .job-action-button { min-height: 28px; padding: 5px 7px; border: 0; border-radius: 7px; color: var(--purple-dark); background: var(--purple-soft); font-size: 8px; font-weight: 800; white-space: nowrap; }
 .job-action-button:hover { background: #e2dcff; }
 .job-action-button.job-manual-button { color: #684e19; background: var(--amber-soft); }

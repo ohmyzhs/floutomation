@@ -203,7 +203,7 @@ function renderJobs() {
     const assetButtons = resultAssets.map((asset, assetIndex) => {
       const targetAttribute = asset.detailUrl ? "data-open-asset" : "data-open-image";
       const target = asset.detailUrl || asset.url;
-      return `<button class="job-asset-button" ${targetAttribute}="${escapeHtml(target)}" type="button" title="결과 이미지 ${assetIndex + 1} 열기" aria-label="${index + 1}번 장면 결과 이미지 ${assetIndex + 1} 열기"><img src="${escapeHtml(asset.url)}" alt="" loading="lazy" /><span>#${assetIndex + 1}</span></button>`;
+      return `<button class="job-asset-button" ${targetAttribute}="${escapeHtml(target)}" type="button" title="결과 이미지 ${assetIndex + 1} 열기" aria-label="${index + 1}번 장면 결과 이미지 ${assetIndex + 1} 열기"><img class="job-asset-thumb" src="${escapeHtml(asset.url)}" alt="" loading="lazy" /><span>#${assetIndex + 1}</span><span class="job-asset-preview" aria-hidden="true"><img src="${escapeHtml(asset.url)}" alt="" loading="lazy" /></span></button>`;
     }).join("");
     const canUseManual = !state.activeJobId && !["running", "waiting", "pausing", "completed"].includes(job.status);
     return `
