@@ -10,7 +10,7 @@ const elements = Object.fromEntries(
     "analysisSummary", "detectedJobCount", "detectedImageCount", "detectedCharacterCount", "analysisWarning",
     "applyQueueButton", "applyQueueButtonHint", "applyQueueReason", "modelSelect", "aspectRatioSelect", "imageCountSelect", "delayRange", "delayValue", "delayValueLabel", "randomDelayToggle", "randomDelayDescription",
     "characterSection", "characterListCaption", "characterList", "syncCharactersButton", "jobListCaption", "jobList", "retryFailedButton",
-    "assetMappingSection", "assetMappingCaption", "assetMappingList", "scanAssetsButton",
+    "assetMappingSection", "assetMappingCaption", "assetMappingList", "scanAssetsButton", "unassignedOnlyToggle",
     "downloadProjectButton", "downloadProgress", "downloadProgressBar", "downloadStatus",
     "startButton", "startButtonHint", "pauseButton", "resumeButton", "retryFailedFooterButton", "resetButton", "queueControlReason", "toast"
   ].map((id) => [id, document.getElementById(id)])
@@ -27,6 +27,7 @@ let toastTimer = null;
 let sourceSaveTimer = null;
 let downloadBusy = false;
 let flowCheckInFlight = false;
+let showUnassignedOnly = false;
 
 const PROMPT_DRAFT_KEYS = [
   "flowBatchPromptDraft",
@@ -308,11 +309,17 @@ function renderAssetMapping() {
   jobs.forEach((job) => (job.mappedAssetIds || []).forEach((id) => {
     mappedById.set(String(id), { jobId: job.id, source: "manual" });
   }));
+  const unassignedCount = catalog.filter((asset) => !assetKeys(asset).some((key) => mappedById.has(key))).length;
+  const visibleCatalog = showUnassignedOnly
+    ? catalog.filter((asset) => assetKeys(asset).every((key) => !mappedById.has(key)))
+    : catalog;
   const canEdit = !state.activeJobId && !["running", "waiting", "pausing"].includes(state.status);
   elements.assetMappingCaption.textContent = catalog.length
-    ? `${catalog.length}개 이미지 · asset ID 기준 고정 매핑`
+    ? `${catalog.length}개 이미지 · 미지정 ${unassignedCount}개`
     : "Flow asset ID를 장면에 고정합니다";
   elements.scanAssetsButton.disabled = !canEdit;
+  elements.unassignedOnlyToggle.checked = showUnassignedOnly;
+  elements.unassignedOnlyToggle.disabled = !catalog.length;
   if (!catalog.length) {
     elements.assetMappingList.innerHTML = '<div class="empty-state compact-empty"><span>↔</span><p>Flow 목록을 새로고침하면<br />매핑할 이미지가 표시됩니다.</p></div>';
     return;
@@ -321,7 +328,12 @@ function renderAssetMapping() {
     const mode = job.sourceMode === "thumbnail" ? "썸네일" : job.sourceMode === "intro" ? `인트로 ${job.sourceNumber || job.number}` : `장면 ${String(job.sourceNumber || job.number).padStart(3, "0")}`;
     return `${mode} · ${job.title || "프롬프트"}`;
   };
-  elements.assetMappingList.innerHTML = catalog.map((asset, index) => {
+  if (!visibleCatalog.length) {
+    elements.assetMappingList.innerHTML = '<div class="empty-state compact-empty"><span>✓</span><p>모든 Flow 이미지가 장면에 연결되어 있습니다.</p></div>';
+    return;
+  }
+  elements.assetMappingList.innerHTML = visibleCatalog.map((asset) => {
+    const index = catalog.indexOf(asset);
     const key = asset.assetId || asset.detailUrl || asset.url;
     const assignment = mappedById.get(key);
     const selectedJobId = assignment?.jobId || "";
@@ -784,6 +796,10 @@ elements.scanAssetsButton.addEventListener("click", withUiError(async () => {
   renderState();
   showToast(`Flow 이미지 ${result.assetCount}개를 읽었습니다.${result.removedMappings ? ` 삭제된 이미지 매핑 ${result.removedMappings}건을 해제했습니다.` : " 장면별로 매핑할 수 있습니다."}`);
 }));
+elements.unassignedOnlyToggle.addEventListener("change", () => {
+  showUnassignedOnly = elements.unassignedOnlyToggle.checked;
+  renderState();
+});
 elements.assetMappingList.addEventListener("change", withUiError(async (event) => {
   const select = event.target.closest("[data-map-asset]");
   if (!select) return;
@@ -842,10 +858,6 @@ chrome.runtime.onMessage.addListener((message) => {
 setInterval(() => {
   if (state.status === "waiting" && state.nextRunAt) renderState();
 }, 1_000);
-
-setInterval(() => {
-  if (!flowCheckInFlight) checkFlow({ notify: false }).catch(() => {});
-}, 2_000);
 
 async function initialize() {
   const [storedState, draft] = await Promise.all([

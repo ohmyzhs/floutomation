@@ -204,7 +204,13 @@
                 <p id="assetMappingCaption">Flow asset ID를 장면에 고정합니다</p>
               </div>
             </div>
-            <button id="scanAssetsButton" class="text-button" type="button">Flow 목록 새로고침</button>
+            <div class="asset-mapping-controls">
+              <label class="asset-filter-toggle" title="장면에 아직 연결되지 않은 이미지만 표시합니다">
+                <input id="unassignedOnlyToggle" type="checkbox" />
+                <span>미지정만 보기</span>
+              </label>
+              <button id="scanAssetsButton" class="text-button" type="button">Flow 목록 새로고침</button>
+            </div>
           </div>
           <p class="mapping-note">자동 생성 결과는 작업별 asset ID를 우선 사용합니다. 결과가 섞였거나 수동으로 만든 이미지는 아래 목록에서 장면을 지정하면 해당 ID로 고정됩니다. 한 이미지는 한 장면에만 매핑됩니다.</p>
           <div id="assetMappingList" class="asset-mapping-list">

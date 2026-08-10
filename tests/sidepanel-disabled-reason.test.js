@@ -18,11 +18,11 @@ test("disabled controls expose both a tooltip and visible reason text", () => {
   assert.match(source, /queueControlReason/);
 });
 
-test("connection status refreshes automatically without duplicate checks", () => {
+test("connection status is checked manually without a polling loop", () => {
   assert.match(source, /let flowCheckInFlight = false/);
   assert.match(source, /send\("CHECK_FLOW"\)/);
-  assert.match(source, /if \(!flowCheckInFlight\)/);
-  assert.match(source, /setInterval\(\(\) => \{/);
+  assert.match(source, /if \(flowCheckInFlight\) return null/);
+  assert.doesNotMatch(source, /checkFlow\(\{ notify: false \}\).*2_000/);
 });
 
 test("queue reset clears both scene and intro prompt drafts", () => {
@@ -64,4 +64,10 @@ test("asset mapping reflects automatic and manual job assignments", () => {
   assert.match(source, /source: "auto"/);
   assert.match(source, /source: "manual"/);
   assert.match(source, /asset-mapping-source/);
+});
+
+test("asset mapping can filter to unassigned images", () => {
+  assert.match(source, /showUnassignedOnly/);
+  assert.match(source, /unassignedOnlyToggle/);
+  assert.match(source, /visibleCatalog/);
 });
