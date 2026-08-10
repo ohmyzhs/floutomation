@@ -78,3 +78,8 @@ test("stale asset mappings are visible and can be disconnected", () => {
   assert.match(source, /data-remove-job-asset/);
   assert.match(source, /UNMAP_ASSET_FROM_JOB/);
 });
+
+test("asset disconnect controls are scoped to thumbnail wrappers", () => {
+  assert.match(source, /<span class="job-asset-wrap"><button class="job-asset-button"/);
+  assert.match(source, /class="job-asset-remove"/);
+});
