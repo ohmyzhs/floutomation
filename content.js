@@ -11,6 +11,7 @@
   const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
   const UI_SETTLE_MS = 1_200;
   const NAVIGATION_SETTLE_MS = 1_800;
+  const MAX_TRACKED_GENERATED_IMAGES = 4;
 
   function normalize(value) {
     return String(value || "")
@@ -635,11 +636,14 @@
     return match && /^https:\/\//i.test(match[1]) ? { url: match[1], detailUrl: "", assetId: "" } : null;
   }
 
-  function captureLargeMediaAssets() {
+  function captureLargeMediaAssets({ includeOffscreen = false } = {}) {
     const candidates = Array.from(document.querySelectorAll('img, video[poster], canvas, [style*="background-image"]'));
     const assets = new Map();
     candidates.forEach((element, index) => {
-      if (!(element instanceof HTMLElement) || !visible(element)) return;
+      if (!(element instanceof HTMLElement)) return;
+      const style = getComputedStyle(element);
+      if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity || 1) <= 0) return;
+      if (!includeOffscreen && !visible(element)) return;
       if (element.closest('button[aria-label*="프로필"], button[aria-label*="profile" i]')) return;
       const rect = element.getBoundingClientRect();
       const intrinsicWidth = element instanceof HTMLImageElement ? element.naturalWidth : element instanceof HTMLCanvasElement ? element.width : rect.width;
@@ -653,21 +657,33 @@
   }
 
   function captureLargeMedia() {
-    return new Set(captureLargeMediaAssets().keys());
+    return new Set(captureLargeMediaAssets({ includeOffscreen: true }).keys());
   }
 
   function newDownloadableAssets(mediaAssets, baselineMedia) {
-    const seen = new Set();
-    const assets = [];
-    for (const [fingerprint, asset] of mediaAssets) {
-      const identity = asset?.assetId || asset?.detailUrl || asset?.url;
-      if (baselineMedia.has(fingerprint) || !asset?.url || seen.has(identity)) continue;
-      seen.add(identity);
-      assets.push(asset);
+    function collectLeading(entries) {
+      const seen = new Set();
+      const assets = [];
+      for (const [fingerprint, asset] of entries) {
+        if (baselineMedia.has(fingerprint)) break;
+        const identity = asset?.assetId || asset?.detailUrl || asset?.url;
+        if (!asset?.url || seen.has(identity)) continue;
+        seen.add(identity);
+        assets.push(asset);
+      }
+      return assets;
     }
-    // Flow may return a different number of cards than the requested batch size.
-    // Keep every new asset; the immutable assetId is what binds it to this job.
-    return assets;
+    const entries = Array.from(mediaAssets.entries());
+    // Flow normally inserts newest cards first. The reverse pass keeps this
+    // safe if the localized Flow surface renders the card list oldest-first.
+    const newestBlock = collectLeading(entries);
+    const oldestBlock = collectLeading(entries.slice().reverse());
+    const assets = newestBlock.length ? newestBlock : oldestBlock;
+    // The UI supports at most four images per request. Anything beyond this
+    // is almost certainly a card that became visible outside this generation
+    // boundary, so leave it available for explicit manual mapping instead of
+    // attaching dozens of unrelated cards to one scene.
+    return assets.slice(0, MAX_TRACKED_GENERATED_IMAGES);
   }
 
   function captureCompletionSignals() {
@@ -815,7 +831,7 @@
       const error = findFlowError({ baselineFailureCount });
       if (error) throw new Error(error);
 
-      const currentMediaAssets = captureLargeMediaAssets();
+      const currentMediaAssets = captureLargeMediaAssets({ includeOffscreen: true });
       const resultAssets = newDownloadableAssets(currentMediaAssets, baselineMedia);
       const detectedImages = resultAssets.length;
       if (detectedImages !== lastDetectedCount) {

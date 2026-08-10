@@ -75,6 +75,12 @@ test("character registration monitoring responds to a requested stop", () => {
   );
 });
 
+test("scene monitoring captures offscreen baselines and caps automatic result cards", () => {
+  assert.match(contentSource, /MAX_TRACKED_GENERATED_IMAGES\s*=\s*4/);
+  assert.match(contentSource, /captureLargeMediaAssets\(\{ includeOffscreen: true \}\)/);
+  assert.match(contentSource, /assets\.slice\(0, MAX_TRACKED_GENERATED_IMAGES\)/);
+});
+
 test("Flow daily-limit failure cards are inspected as generation errors", () => {
   assert.match(failureCardsSource, /querySelectorAll\("button"\)/);
   assert.match(failureCardsSource, /일일\\s\*한도/);
