@@ -51,3 +51,10 @@ test("job cards separate work actions from state controls and expose asset navig
   assert.match(source, /resultAssets/);
   assert.match(source, /OPEN_ASSET/);
 });
+
+test("job cards expose every tracked result as a numbered thumbnail button", () => {
+  assert.match(source, /displayAssetsForJob/);
+  assert.match(source, /job-asset-button/);
+  assert.match(source, /#\$\{assetIndex \+ 1\}/);
+  assert.match(source, /OPEN_IMAGE/);
+});

@@ -95,6 +95,31 @@ function isFlowAssetUrl(url) {
   }
 }
 
+function reconcileMappedAssets(state, catalog) {
+  const available = new Set((catalog || []).flatMap((asset) => [asset?.assetId, asset?.detailUrl, asset?.url]).filter(Boolean));
+  let removed = 0;
+  for (const job of state.jobs || []) {
+    const before = Array.isArray(job.mappedAssetIds) ? job.mappedAssetIds : [];
+    job.mappedAssetIds = before.filter((id) => available.has(String(id)));
+    removed += before.length - job.mappedAssetIds.length;
+    if (Array.isArray(job.resultAssets) && available.size) {
+      job.resultAssets = job.resultAssets.filter((asset) => [asset?.assetId, asset?.detailUrl, asset?.url].some((key) => key && available.has(key)));
+    }
+  }
+  return removed;
+}
+
+function isTrackedImageUrl(state, url) {
+  const target = String(url || "").trim();
+  if (!/^https:\/\//i.test(target)) return false;
+  const assets = [
+    ...(state.assetCatalog || []),
+    ...(state.jobs || []).flatMap((job) => job.resultAssets || []),
+    ...(state.characters || []).flatMap((character) => character.resultAssets || [])
+  ];
+  return assets.some((asset) => asset.url === target || asset.detailUrl === target);
+}
+
 function flowProjectFromTab(tab) {
   const projectId = projectIdFromFlowUrl(tab?.url);
   return projectId ? {
@@ -1115,6 +1140,7 @@ async function downloadProject() {
       draft.tabId = mainTab.id;
       draft.flowConnected = true;
       draft.assetCatalog = uniqueAssets(scan.sceneAssets || []);
+      reconcileMappedAssets(draft, draft.assetCatalog);
       draft.lastFlowSceneImageCount = Array.isArray(scan.sceneAssets) ? scan.sceneAssets.length : null;
       draft.lastFlowImageSyncAt = Date.now();
     });
@@ -1190,14 +1216,16 @@ async function scanProjectAssets() {
     characterKeys: current.characters.map((character) => character.key)
   });
   if (!scan?.ready) throw new Error(scan?.error || "Flow 프로젝트의 이미지 URL을 수집하지 못했습니다.");
+  let removedMappings = 0;
   const state = await updateState((draft) => {
     draft.assetCatalog = uniqueAssets(scan.sceneAssets || []);
+    removedMappings = reconcileMappedAssets(draft, draft.assetCatalog);
     draft.tabId = mainTab.id;
     draft.flowConnected = true;
     draft.lastFlowSceneImageCount = draft.assetCatalog.length;
     draft.lastFlowImageSyncAt = Date.now();
   });
-  return { state, assetCount: state.assetCatalog.length, projectTitle: scan.projectTitle };
+  return { state, assetCount: state.assetCatalog.length, removedMappings, projectTitle: scan.projectTitle };
 }
 
 function assertMappingReady(state) {
@@ -1574,6 +1602,14 @@ async function handleUiMessage(message) {
   if (message.type === "OPEN_ASSET") {
     const url = String(message.url || "");
     if (!isFlowAssetUrl(url)) throw new Error("Flow 이미지 상세보기 주소가 올바르지 않습니다.");
+    const tab = await chrome.tabs.create({ url, active: true });
+    return { opened: true, tabId: tab.id };
+  }
+
+  if (message.type === "OPEN_IMAGE") {
+    const url = String(message.url || "");
+    const state = await readState();
+    if (!isTrackedImageUrl(state, url)) throw new Error("현재 큐에 연결된 이미지가 아닙니다.");
     const tab = await chrome.tabs.create({ url, active: true });
     return { opened: true, tabId: tab.id };
   }

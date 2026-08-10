@@ -182,10 +182,29 @@ function renderJobs() {
     failed: "실패"
   };
 
+  function displayAssetsForJob(job) {
+    const catalog = Array.isArray(state.assetCatalog) ? state.assetCatalog : [];
+    const catalogByKey = new Map(catalog.map((asset) => [asset.assetId || asset.detailUrl || asset.url, asset]));
+    const values = [
+      ...(Array.isArray(job.resultAssets) ? job.resultAssets : []),
+      ...(Array.isArray(job.mappedAssetIds) ? job.mappedAssetIds.map((id) => catalogByKey.get(String(id))).filter(Boolean) : [])
+    ];
+    const seen = new Set();
+    return values.filter((asset) => {
+      const key = asset.assetId || asset.detailUrl || asset.url;
+      if (!key || seen.has(key) || !asset.url) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
   elements.jobList.innerHTML = state.jobs.map((job, index) => {
-    const firstDetailUrl = job.status === "completed"
-      ? job.resultAssets?.find((asset) => asset?.detailUrl)?.detailUrl || ""
-      : "";
+    const resultAssets = displayAssetsForJob(job);
+    const assetButtons = resultAssets.map((asset, assetIndex) => {
+      const targetAttribute = asset.detailUrl ? "data-open-asset" : "data-open-image";
+      const target = asset.detailUrl || asset.url;
+      return `<button class="job-asset-button" ${targetAttribute}="${escapeHtml(target)}" type="button" title="결과 이미지 ${assetIndex + 1} 열기" aria-label="${index + 1}번 장면 결과 이미지 ${assetIndex + 1} 열기"><img src="${escapeHtml(asset.url)}" alt="" loading="lazy" /><span>#${assetIndex + 1}</span></button>`;
+    }).join("");
     const canUseManual = !state.activeJobId && !["running", "waiting", "pausing", "completed"].includes(job.status);
     return `
       <article class="job-item ${escapeHtml(job.status)}">
@@ -204,7 +223,7 @@ function renderJobs() {
         <div class="job-action-groups">
           <div class="job-action-group job-work-actions" aria-label="작업 기능">
             <button class="job-action-button" data-copy-prompt="${escapeHtml(job.id)}" type="button" aria-label="${index + 1}번 프롬프트 복사">복사</button>
-            ${firstDetailUrl ? `<button class="job-action-button" data-open-asset="${escapeHtml(firstDetailUrl)}" type="button" aria-label="${index + 1}번 결과 상세보기">보러가기</button>` : ""}
+            ${resultAssets.length ? `<div class="job-assets" aria-label="${index + 1}번 장면 결과 이미지">${assetButtons}</div>` : ""}
             ${canUseManual ? `<button class="job-action-button job-manual-button" data-prepare-manual-job="${escapeHtml(job.id)}" type="button">수동 프롬프트 보내기</button>` : ""}
           </div>
           <div class="job-action-group job-state-controls" aria-label="상태 제어">
@@ -713,6 +732,11 @@ elements.jobList.addEventListener("click", withUiError(async (event) => {
     await send("OPEN_ASSET", { url: assetButton.dataset.openAsset });
     return;
   }
+  const imageButton = event.target.closest("[data-open-image]");
+  if (imageButton) {
+    await send("OPEN_IMAGE", { url: imageButton.dataset.openImage });
+    return;
+  }
   const prepareButton = event.target.closest("[data-prepare-manual-job]");
   if (prepareButton) {
     state = await send("PREPARE_MANUAL_SCENE", { jobId: prepareButton.dataset.prepareManualJob });
@@ -746,7 +770,7 @@ elements.scanAssetsButton.addEventListener("click", withUiError(async () => {
   const result = await send("SCAN_PROJECT_ASSETS");
   state = result.state;
   renderState();
-  showToast(`Flow 이미지 ${result.assetCount}개를 읽었습니다. 장면별로 매핑할 수 있습니다.`);
+  showToast(`Flow 이미지 ${result.assetCount}개를 읽었습니다.${result.removedMappings ? ` 삭제된 이미지 매핑 ${result.removedMappings}건을 해제했습니다.` : " 장면별로 매핑할 수 있습니다."}`);
 }));
 elements.assetMappingList.addEventListener("change", withUiError(async (event) => {
   const select = event.target.closest("[data-map-asset]");
