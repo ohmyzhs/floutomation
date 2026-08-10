@@ -236,6 +236,13 @@ test("hydration adds downloadable result arrays to older queue state", () => {
   assert.deepEqual(state.characters[0].resultAssets, []);
 });
 
+test("hydration bounds polluted scene result arrays and records overflow", () => {
+  const assets = Array.from({ length: 32 }, (_, index) => ({ url: `https://example.test/${index}` }));
+  const state = hydrateState({ jobs: [{ id: "polluted-job", prompt: "scene", resultAssets: assets }] });
+  assert.equal(state.jobs[0].resultAssets.length, 4);
+  assert.equal(state.jobs[0].resultAssetOverflowCount, 28);
+});
+
 test("character tasks run before scene jobs", () => {
   const state = createInitialState();
   state.characters = createCharacters([

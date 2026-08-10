@@ -241,6 +241,9 @@ function renderJobs() {
         ${job.status === "manual"
           ? `<p class="job-manual-note">Flow에서 직접 생성한 뒤 결과를 확인하고 완료 처리하세요.</p>`
           : ""}
+        ${Number(job.resultAssetOverflowCount || 0) > 0
+          ? `<p class="job-retry-note">자동 연결 결과가 ${Number(job.resultAssetOverflowCount) + resultAssets.length}장 감지되어 최신 ${resultAssets.length}장만 연결했습니다. 나머지는 이미지 매핑에서 직접 지정할 수 있습니다.</p>`
+          : ""}
         ${job.error ? `<p class="job-error">${escapeHtml(job.error)}</p>` : ""}
       </article>
     `;

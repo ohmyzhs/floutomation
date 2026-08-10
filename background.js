@@ -11,6 +11,7 @@ import {
   hasPendingTasks,
   markSceneFailedAndContinue,
   MAX_AUTOMATIC_RETRIES,
+  MAX_TRACKED_RESULT_ASSETS,
   hydrateState,
   isBlockingFlowError,
   normalizeOptions,
@@ -613,9 +614,10 @@ async function completeTask(taskId, taskType, imagesGenerated, assets = []) {
     }
     else {
       task.imagesGenerated = Math.max(0, Number(imagesGenerated || draft.options.imagesPerPrompt));
-      // Preserve every asset Flow reported for this job. A prompt can produce
-      // 1, 3, or 4 cards even when the requested batch size is different.
-      task.resultAssets = uniqueAssets([...(task.resultAssets || []), ...decorateTaskAssets(task, assets)]);
+      // Preserve variable-size results up to Flow's four-image UI limit.
+      const allResultAssets = uniqueAssets([...(task.resultAssets || []), ...decorateTaskAssets(task, assets)]);
+      task.resultAssetOverflowCount = Math.max(0, allResultAssets.length - MAX_TRACKED_RESULT_ASSETS);
+      task.resultAssets = allResultAssets.slice(0, MAX_TRACKED_RESULT_ASSETS);
       task.generationPercentages = [];
       task.baselineMedia = [];
       task.baselineCapturedAt = null;
@@ -977,10 +979,12 @@ async function handleFlowEvent(message, sender) {
         job.baselineFailureCount = Math.max(0, message.baselineFailureCount);
       }
       if (Array.isArray(message.assets) && message.assets.length) {
-        job.resultAssets = uniqueAssets([
+        const allResultAssets = uniqueAssets([
           ...job.resultAssets,
           ...decorateTaskAssets(job, message.assets)
         ]);
+        job.resultAssetOverflowCount = Math.max(0, allResultAssets.length - MAX_TRACKED_RESULT_ASSETS);
+        job.resultAssets = allResultAssets.slice(0, MAX_TRACKED_RESULT_ASSETS);
       }
       if (message.requestSubmittedAt) job.requestSubmittedAt = Number(message.requestSubmittedAt);
       if (message.generationMode) job.generationMode = String(message.generationMode);
