@@ -204,7 +204,11 @@ function renderJobs() {
     const assetButtons = resultAssets.map((asset, assetIndex) => {
       const targetAttribute = asset.detailUrl ? "data-open-asset" : "data-open-image";
       const target = asset.detailUrl || asset.url;
-      return `<button class="job-asset-button" ${targetAttribute}="${escapeHtml(target)}" type="button" title="결과 이미지 ${assetIndex + 1} 열기" aria-label="${index + 1}번 장면 결과 이미지 ${assetIndex + 1} 열기"><img class="job-asset-thumb" src="${escapeHtml(asset.url)}" alt="" loading="lazy" /><span>#${assetIndex + 1}</span><span class="job-asset-preview" aria-hidden="true"><img src="${escapeHtml(asset.url)}" alt="" loading="lazy" /></span></button>`;
+      const key = asset.assetId || asset.detailUrl || asset.url;
+      const removeButton = canRemove
+        ? `<button class="job-asset-remove" data-remove-job-asset="${escapeHtml(job.id)}" data-asset-key="${escapeHtml(key)}" type="button" aria-label="${index + 1}번 장면 결과 이미지 ${assetIndex + 1} 연결 해제">×</button>`
+        : "";
+      return `<span class="job-asset-wrap"><button class="job-asset-button" ${targetAttribute}="${escapeHtml(target)}" type="button" title="결과 이미지 ${assetIndex + 1} 열기" aria-label="${index + 1}번 장면 결과 이미지 ${assetIndex + 1} 열기"><img class="job-asset-thumb" src="${escapeHtml(asset.url)}" alt="" loading="lazy" /><span>#${assetIndex + 1}</span><span class="job-asset-preview" aria-hidden="true"><img src="${escapeHtml(asset.url)}" alt="" loading="lazy" /></span></button>${removeButton}</span>`;
     }).join("");
     const canUseManual = !state.activeJobId && !["running", "waiting", "pausing", "completed"].includes(job.status);
     return `
@@ -314,25 +318,47 @@ function renderAssetMapping() {
     ? catalog.filter((asset) => assetKeys(asset).every((key) => !mappedById.has(key)))
     : catalog;
   const canEdit = !state.activeJobId && !["running", "waiting", "pausing"].includes(state.status);
-  elements.assetMappingCaption.textContent = catalog.length
-    ? `${catalog.length}개 이미지 · 미지정 ${unassignedCount}개`
-    : "Flow asset ID를 장면에 고정합니다";
-  elements.scanAssetsButton.disabled = !canEdit;
-  elements.unassignedOnlyToggle.checked = showUnassignedOnly;
-  elements.unassignedOnlyToggle.disabled = !catalog.length;
-  if (!catalog.length) {
-    elements.assetMappingList.innerHTML = '<div class="empty-state compact-empty"><span>↔</span><p>Flow 목록을 새로고침하면<br />매핑할 이미지가 표시됩니다.</p></div>';
-    return;
-  }
   const jobLabel = (job) => {
     const mode = job.sourceMode === "thumbnail" ? "썸네일" : job.sourceMode === "intro" ? `인트로 ${job.sourceNumber || job.number}` : `장면 ${String(job.sourceNumber || job.number).padStart(3, "0")}`;
     return `${mode} · ${job.title || "프롬프트"}`;
   };
-  if (!visibleCatalog.length) {
-    elements.assetMappingList.innerHTML = '<div class="empty-state compact-empty"><span>✓</span><p>모든 Flow 이미지가 장면에 연결되어 있습니다.</p></div>';
+  const catalogKeys = new Set(catalog.flatMap(assetKeys));
+  const orphanAssignments = [];
+  const orphanSeen = new Map();
+  jobs.forEach((job) => {
+    (job.resultAssets || []).forEach((asset) => {
+      const keys = assetKeys(asset);
+      if (keys.some((key) => catalogKeys.has(key))) return;
+      const key = keys[0];
+      if (!key || keys.some((alias) => orphanSeen.has(`${job.id}:${alias}`))) return;
+      keys.forEach((alias) => orphanSeen.set(`${job.id}:${alias}`, true));
+      orphanAssignments.push({ job, key, asset });
+    });
+    (job.mappedAssetIds || []).forEach((key) => {
+      const normalizedKey = String(key).trim();
+      if (catalogKeys.has(normalizedKey) || orphanSeen.has(`${job.id}:${normalizedKey}`)) return;
+      orphanSeen.set(`${job.id}:${normalizedKey}`, true);
+      orphanAssignments.push({ job, key: String(key), asset: null });
+    });
+  });
+  const orphanMarkup = orphanAssignments.length
+    ? `<div class="asset-orphan-heading">Flow 목록에 없는 연결 ${orphanAssignments.length}개</div>${orphanAssignments.map(({ job, key, asset }) => `<div class="asset-orphan-row"><div class="asset-orphan-thumb">${asset?.url ? `<img src="${escapeHtml(asset.url)}" alt="" />` : "!"}</div><div class="asset-mapping-copy"><strong>${escapeHtml(jobLabel(job))}</strong><small title="${escapeHtml(key)}">삭제되었거나 현재 Flow 목록에서 사라진 이미지</small></div><button class="asset-orphan-remove" data-remove-job-asset="${escapeHtml(job.id)}" data-asset-key="${escapeHtml(key)}" type="button">연결 해제</button></div>`).join("")}`
+    : "";
+  elements.assetMappingCaption.textContent = catalog.length
+    ? `${catalog.length}개 이미지 · 미지정 ${unassignedCount}개${orphanAssignments.length ? ` · 오래된 연결 ${orphanAssignments.length}개` : ""}`
+    : orphanAssignments.length ? `Flow 목록 외 연결 ${orphanAssignments.length}개` : "Flow asset ID를 장면에 고정합니다";
+  elements.scanAssetsButton.disabled = !canEdit;
+  elements.unassignedOnlyToggle.checked = showUnassignedOnly;
+  elements.unassignedOnlyToggle.disabled = !catalog.length;
+  if (!catalog.length) {
+    elements.assetMappingList.innerHTML = orphanMarkup || '<div class="empty-state compact-empty"><span>↔</span><p>Flow 목록을 새로고침하면<br />매핑할 이미지가 표시됩니다.</p></div>';
     return;
   }
-  elements.assetMappingList.innerHTML = visibleCatalog.map((asset) => {
+  if (!visibleCatalog.length) {
+    elements.assetMappingList.innerHTML = orphanMarkup || '<div class="empty-state compact-empty"><span>✓</span><p>모든 Flow 이미지가 장면에 연결되어 있습니다.</p></div>';
+    return;
+  }
+  const catalogMarkup = visibleCatalog.map((asset) => {
     const index = catalog.indexOf(asset);
     const key = asset.assetId || asset.detailUrl || asset.url;
     const assignment = mappedById.get(key);
@@ -344,6 +370,7 @@ function renderAssetMapping() {
       <select data-map-asset="${escapeHtml(key)}" aria-label="Flow 이미지 ${index + 1} 장면 매핑" ${canEdit ? "" : "disabled"}>${options.join("")}</select>
     </div>`;
   }).join("");
+  elements.assetMappingList.innerHTML = `${orphanMarkup}${catalogMarkup}`;
 }
 
 function renderState() {
@@ -746,6 +773,16 @@ async function copyPrompt(jobId) {
   showToast(`${job.title} 프롬프트를 복사했습니다.`);
 }
 elements.jobList.addEventListener("click", withUiError(async (event) => {
+  const removeAssetButton = event.target.closest("[data-remove-job-asset]");
+  if (removeAssetButton) {
+    state = await send("UNMAP_ASSET_FROM_JOB", {
+      assetId: removeAssetButton.dataset.assetKey,
+      jobId: removeAssetButton.dataset.removeJobAsset
+    });
+    renderState();
+    showToast("장면에서 이미지 연결을 해제했습니다.");
+    return;
+  }
   const copyButton = event.target.closest("[data-copy-prompt]");
   if (copyButton) {
     await copyPrompt(copyButton.dataset.copyPrompt);
@@ -813,6 +850,16 @@ elements.assetMappingList.addEventListener("change", withUiError(async (event) =
     showToast("이미지 매핑을 해제했습니다.");
   }
   renderState();
+}));
+elements.assetMappingList.addEventListener("click", withUiError(async (event) => {
+  const removeButton = event.target.closest("[data-remove-job-asset]");
+  if (!removeButton) return;
+  state = await send("UNMAP_ASSET_FROM_JOB", {
+    assetId: removeButton.dataset.assetKey,
+    jobId: removeButton.dataset.removeJobAsset
+  });
+  renderState();
+  showToast("삭제되었거나 잘못된 이미지 연결을 해제했습니다.");
 }));
 elements.characterList.addEventListener("click", withUiError(async (event) => {
   const retryButton = event.target.closest("[data-retry-character]");

@@ -71,3 +71,10 @@ test("asset mapping can filter to unassigned images", () => {
   assert.match(source, /unassignedOnlyToggle/);
   assert.match(source, /visibleCatalog/);
 });
+
+test("stale asset mappings are visible and can be disconnected", () => {
+  assert.match(source, /orphanAssignments/);
+  assert.match(source, /Flow 목록에 없는 연결/);
+  assert.match(source, /data-remove-job-asset/);
+  assert.match(source, /UNMAP_ASSET_FROM_JOB/);
+});

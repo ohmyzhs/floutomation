@@ -1261,20 +1261,28 @@ async function mapAssetToJob(assetId, jobId) {
   });
 }
 
+function removeAssetAliasesFromJob(job, requestedKey) {
+  const key = String(requestedKey || "").trim();
+  if (!key) return;
+  const aliases = new Set([key]);
+  for (const asset of job.resultAssets || []) {
+    const assetAliases = [asset?.assetId, asset?.detailUrl, asset?.url].map((value) => String(value || "").trim()).filter(Boolean);
+    if (assetAliases.includes(key)) assetAliases.forEach((alias) => aliases.add(alias));
+  }
+  job.mappedAssetIds = (job.mappedAssetIds || []).filter((id) => !aliases.has(String(id).trim()));
+  job.resultAssets = (job.resultAssets || []).filter((asset) => ![asset?.assetId, asset?.detailUrl, asset?.url].some((value) => aliases.has(String(value || "").trim())));
+}
+
 async function unmapAssetFromJob(assetId, jobId) {
   const key = String(assetId || "").trim();
   return updateState((state) => {
     assertMappingReady(state);
     const target = state.jobs.find((job) => job.id === jobId);
     if (target) {
-      target.mappedAssetIds = (target.mappedAssetIds || []).filter((id) => id !== key);
-      target.resultAssets = (target.resultAssets || []).filter((entry) => ![entry.assetId, entry.detailUrl, entry.url].includes(key));
+      removeAssetAliasesFromJob(target, key);
       return;
     }
-    for (const job of state.jobs) {
-      job.mappedAssetIds = (job.mappedAssetIds || []).filter((id) => id !== key);
-      job.resultAssets = (job.resultAssets || []).filter((entry) => ![entry.assetId, entry.detailUrl, entry.url].includes(key));
-    }
+    for (const job of state.jobs) removeAssetAliasesFromJob(job, key);
   });
 }
 
