@@ -27,6 +27,7 @@ import {
   buildDownloadManifest,
   uniqueAssets
 } from "./lib/download-manifest.js";
+import { buildRemainingAssetAssignments } from "./lib/asset-mapping.js";
 import { requireArchiveResult } from "./lib/archive-result.js";
 import {
   PROJECT_HISTORY_KEY,
@@ -1286,6 +1287,26 @@ async function unmapAssetFromJob(assetId, jobId) {
   });
 }
 
+async function autoMapRemainingAssets() {
+  let assignments = [];
+  const state = await updateState((draft) => {
+    assertMappingReady(draft);
+    assignments = buildRemainingAssetAssignments({
+      catalog: draft.assetCatalog,
+      jobs: draft.jobs,
+      imagesPerPrompt: draft.options.imagesPerPrompt
+    });
+    const jobsById = new Map((draft.jobs || []).map((job) => [job.id, job]));
+    assignments.forEach(({ assetKey, jobId }) => {
+      const job = jobsById.get(jobId);
+      if (!job) return;
+      if (!(job.mappedAssetIds || []).includes(assetKey)) job.mappedAssetIds = [...(job.mappedAssetIds || []), assetKey];
+      job.error = null;
+    });
+  });
+  return { state, mappedCount: assignments.length };
+}
+
 async function handleUiMessage(message) {
   if (message.type === "GET_STATE") return readState();
 
@@ -1294,6 +1315,7 @@ async function handleUiMessage(message) {
   if (message.type === "SCAN_PROJECT_ASSETS") return scanProjectAssets();
   if (message.type === "MAP_ASSET_TO_JOB") return mapAssetToJob(message.assetId, message.jobId);
   if (message.type === "UNMAP_ASSET_FROM_JOB") return unmapAssetFromJob(message.assetId, message.jobId);
+  if (message.type === "AUTO_MAP_REMAINING_ASSETS") return autoMapRemainingAssets();
 
   if (message.type === "SET_QUEUE") {
     await chrome.alarms.clear(QUEUE_ALARM);

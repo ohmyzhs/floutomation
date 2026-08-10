@@ -83,3 +83,9 @@ test("asset disconnect controls are scoped to thumbnail wrappers", () => {
   assert.match(source, /<span class="job-asset-wrap"><button class="job-asset-button"/);
   assert.match(source, /class="job-asset-remove"/);
 });
+
+test("asset mapping exposes a safe remaining-assets auto-fill action", () => {
+  assert.match(source, /autoMapAssetsButton/);
+  assert.match(source, /AUTO_MAP_REMAINING_ASSETS/);
+  assert.match(source, /기존 연결은 유지하고 미지정 이미지를 번호 순서대로 채웁니다/);
+});
