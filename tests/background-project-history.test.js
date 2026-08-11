@@ -21,3 +21,12 @@ test("intro reuse refuses to bind characters from a different Flow project", () 
   assert.match(setQueueSource, /!current\.flowProjectId \|\| !flowProject\?\.projectId \|\| current\.flowProjectId !== flowProject\.projectId/);
   assert.match(setQueueSource, /프로젝트 캐릭터 불러오기/);
 });
+
+test("intro character recovery reloads the active project when saved bindings belong elsewhere", () => {
+  const ensureStart = source.indexOf("async function ensureCurrentProjectCharacters");
+  const ensureEnd = source.indexOf("async function handleFlowEvent", ensureStart);
+  const ensureSource = source.slice(ensureStart, ensureEnd);
+  assert.match(ensureSource, /synchronizeFlowCharacters/);
+  assert.match(ensureSource, /loadCurrentProjectCharacters/);
+  assert.match(source, /message\.type === "ENSURE_CURRENT_PROJECT_CHARACTERS"/);
+});

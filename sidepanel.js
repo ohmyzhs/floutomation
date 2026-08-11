@@ -547,11 +547,23 @@ async function readFile(file) {
     sceneSource = source;
     elements.promptSource.value = source;
   }
+  let characterSyncMessage = "";
+  if (inputMode === "intro") {
+    try {
+      const result = await send("ENSURE_CURRENT_PROJECT_CHARACTERS");
+      state = result.state;
+      const count = result.matchedKeys?.length || result.registeredKeys?.length || state.characters.length;
+      characterSyncMessage = ` · 캐릭터 ${count}명 자동 동기화`;
+    } catch (error) {
+      characterSyncMessage = ` · 캐릭터 자동 동기화 실패: ${String(error?.message || error)}`;
+    }
+  }
   analyzeSource();
+  renderState();
   const summary = inputMode === "intro"
     ? `인트로 ${analysis.prompts.filter((prompt) => prompt.sourceMode === "intro").length}개`
     : `캐릭터 ${analysis.characters?.length || 0}명, 장면 ${analysis.prompts.length}개`;
-  showToast(`${file.name}에서 ${summary}를 찾았습니다.`);
+  showToast(`${file.name}에서 ${summary}를 찾았습니다.${characterSyncMessage}`);
 }
 
 async function applyQueue() {
@@ -654,6 +666,7 @@ elements.sceneModeButton.addEventListener("click", () => {
   inputMode = "scene";
   renderInputMode();
   analyzeSource();
+  renderState();
   chrome.storage.local.set({ flowBatchInputMode: inputMode }).catch(() => {});
 });
 elements.introModeButton.addEventListener("click", () => {
@@ -661,6 +674,7 @@ elements.introModeButton.addEventListener("click", () => {
   inputMode = "intro";
   renderInputMode();
   analyzeSource();
+  renderState();
   chrome.storage.local.set({ flowBatchInputMode: inputMode }).catch(() => {});
 });
 elements.fileInput.addEventListener("change", withUiError(async () => readFile(elements.fileInput.files?.[0])));

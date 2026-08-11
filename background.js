@@ -885,6 +885,20 @@ async function loadCurrentProjectCharacters() {
   };
 }
 
+async function ensureCurrentProjectCharacters() {
+  const current = await readState();
+  if (!current.characters.length) return loadCurrentProjectCharacters();
+  try {
+    return await synchronizeFlowCharacters();
+  } catch (error) {
+    const message = String(error?.message || error);
+    if (/캐릭터 프로젝트와 다릅니다|캐릭터 원본 프로젝트를 확인할 수 없습니다/.test(message)) {
+      return loadCurrentProjectCharacters();
+    }
+    throw error;
+  }
+}
+
 async function handleFlowEvent(message, sender) {
   const tabId = sender.tab?.id ?? null;
 
@@ -1400,6 +1414,10 @@ async function handleUiMessage(message) {
 
   if (message.type === "SYNC_FLOW_STATE") {
     return synchronizeFlowCharacters();
+  }
+
+  if (message.type === "ENSURE_CURRENT_PROJECT_CHARACTERS") {
+    return ensureCurrentProjectCharacters();
   }
 
   if (message.type === "LOAD_PROJECT_CHARACTERS") {

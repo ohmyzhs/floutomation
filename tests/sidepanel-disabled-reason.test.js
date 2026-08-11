@@ -90,3 +90,9 @@ test("asset mapping exposes an explicit suffix remapping action", () => {
   assert.match(source, /REASSIGN_ASSETS_FROM_POSITION/);
   assert.match(source, /선택한 이미지와 장면부터 이후 매핑을 번호 순서대로 다시 지정합니다/);
 });
+
+test("intro file loading exposes characters and syncs the current Flow project when needed", () => {
+  assert.match(source, /elements\.characterSection\.hidden = !characters\.length && inputMode !== "intro"/);
+  assert.match(source, /ENSURE_CURRENT_PROJECT_CHARACTERS/);
+  assert.match(source, /캐릭터 .*자동 동기화/);
+});
