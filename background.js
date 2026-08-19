@@ -1265,10 +1265,11 @@ async function mapAssetToJob(assetId, jobId) {
     if (!target) throw new Error("매핑할 장면을 찾지 못했습니다.");
     const asset = state.assetCatalog.find((entry) => entry.assetId === normalizedAssetId || entry.detailUrl === normalizedAssetId || entry.url === normalizedAssetId);
     const key = asset.assetId || asset.detailUrl || asset.url;
+    const aliases = new Set([asset.assetId, asset.detailUrl, asset.url].map((value) => String(value || "").trim()).filter(Boolean));
     for (const job of state.jobs) {
-      job.mappedAssetIds = (job.mappedAssetIds || []).filter((id) => id !== key);
+      job.mappedAssetIds = (job.mappedAssetIds || []).filter((id) => !aliases.has(String(id).trim()));
       if (job.id !== target.id) {
-        job.resultAssets = (job.resultAssets || []).filter((entry) => ![entry.assetId, entry.detailUrl, entry.url].includes(key));
+        job.resultAssets = (job.resultAssets || []).filter((entry) => ![entry.assetId, entry.detailUrl, entry.url].some((value) => aliases.has(String(value || "").trim())));
       }
     }
     target.mappedAssetIds = [...(target.mappedAssetIds || []), key];

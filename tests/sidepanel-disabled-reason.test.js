@@ -59,6 +59,14 @@ test("job cards expose every tracked result as a numbered thumbnail button", () 
   assert.match(source, /OPEN_IMAGE/);
 });
 
+test("job card thumbnails can be dragged to another scene card", () => {
+  assert.match(source, /data-drag-asset/);
+  assert.match(source, /data-drop-job/);
+  assert.match(source, /addEventListener\("dragstart"/);
+  assert.match(source, /addEventListener\("drop"/);
+  assert.match(source, /MAP_ASSET_TO_JOB/);
+});
+
 test("asset mapping reflects automatic and manual job assignments", () => {
   assert.match(source, /job\.resultAssets/);
   assert.match(source, /source: "auto"/);

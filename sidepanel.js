@@ -30,6 +30,8 @@ let flowCheckInFlight = false;
 let showUnassignedOnly = false;
 let mappingStartAssetKey = "";
 let mappingStartJobId = "";
+let draggingAsset = null;
+let suppressAssetOpenUntil = 0;
 
 const PROMPT_DRAFT_KEYS = [
   "flowBatchPromptDraft",
@@ -210,11 +212,12 @@ function renderJobs() {
       const removeButton = canRemove
         ? `<button class="job-asset-remove" data-remove-job-asset="${escapeHtml(job.id)}" data-asset-key="${escapeHtml(key)}" type="button" aria-label="${index + 1}번 장면 결과 이미지 ${assetIndex + 1} 연결 해제">×</button>`
         : "";
-      return `<span class="job-asset-wrap"><button class="job-asset-button" ${targetAttribute}="${escapeHtml(target)}" type="button" title="결과 이미지 ${assetIndex + 1} 열기" aria-label="${index + 1}번 장면 결과 이미지 ${assetIndex + 1} 열기"><img class="job-asset-thumb" src="${escapeHtml(asset.url)}" alt="" loading="lazy" /><span>#${assetIndex + 1}</span><span class="job-asset-preview" aria-hidden="true"><img src="${escapeHtml(asset.url)}" alt="" loading="lazy" /></span></button>${removeButton}</span>`;
+      const dragTitle = canRemove ? `다른 장면으로 드래그해 이동 · 결과 이미지 ${assetIndex + 1} 열기` : `결과 이미지 ${assetIndex + 1} 열기`;
+      return `<span class="job-asset-wrap"><button class="job-asset-button" ${targetAttribute}="${escapeHtml(target)}" data-drag-asset="${escapeHtml(key)}" data-drag-source="${escapeHtml(job.id)}" draggable="${canRemove ? "true" : "false"}" type="button" title="${dragTitle}" aria-label="${index + 1}번 장면 결과 이미지 ${assetIndex + 1} 열기"><img class="job-asset-thumb" src="${escapeHtml(asset.url)}" alt="" loading="lazy" /><span>#${assetIndex + 1}</span><span class="job-asset-preview" aria-hidden="true"><img src="${escapeHtml(asset.url)}" alt="" loading="lazy" /></span></button>${removeButton}</span>`;
     }).join("");
     const canUseManual = !state.activeJobId && !["running", "waiting", "pausing", "completed"].includes(job.status);
     return `
-      <article class="job-item ${escapeHtml(job.status)}">
+      <article class="job-item ${escapeHtml(job.status)}" data-drop-job="${escapeHtml(job.id)}">
         <div class="job-row">
           <span class="job-number">${String(index + 1).padStart(2, "0")}</span>
           <div class="job-copy" title="${escapeHtml(job.prompt)}">
@@ -821,11 +824,13 @@ elements.jobList.addEventListener("click", withUiError(async (event) => {
   }
   const assetButton = event.target.closest("[data-open-asset]");
   if (assetButton) {
+    if (Date.now() < suppressAssetOpenUntil) return;
     await send("OPEN_ASSET", { url: assetButton.dataset.openAsset });
     return;
   }
   const imageButton = event.target.closest("[data-open-image]");
   if (imageButton) {
+    if (Date.now() < suppressAssetOpenUntil) return;
     await send("OPEN_IMAGE", { url: imageButton.dataset.openImage });
     return;
   }
@@ -847,6 +852,51 @@ elements.jobList.addEventListener("click", withUiError(async (event) => {
   if (!button) return;
   state = await send("REMOVE_JOB", { jobId: button.dataset.removeJob });
   renderState();
+}));
+function clearJobDropTargets() {
+  elements.jobList.querySelectorAll(".job-item.drag-over").forEach((item) => item.classList.remove("drag-over"));
+}
+elements.jobList.addEventListener("dragstart", (event) => {
+  const imageButton = event.target.closest("[data-drag-asset]");
+  if (!imageButton || imageButton.draggable !== true) return;
+  draggingAsset = {
+    assetKey: imageButton.dataset.dragAsset,
+    sourceJobId: imageButton.dataset.dragSource
+  };
+  imageButton.classList.add("dragging");
+  event.dataTransfer?.setData("application/x-flow-asset", draggingAsset.assetKey);
+  event.dataTransfer?.setData("text/plain", draggingAsset.assetKey);
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+});
+elements.jobList.addEventListener("dragover", (event) => {
+  const target = event.target.closest("[data-drop-job]");
+  if (!draggingAsset || !target || target.dataset.dropJob === draggingAsset.sourceJobId) return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+  clearJobDropTargets();
+  target.classList.add("drag-over");
+});
+elements.jobList.addEventListener("dragleave", (event) => {
+  const target = event.target.closest("[data-drop-job]");
+  if (target && !target.contains(event.relatedTarget)) target.classList.remove("drag-over");
+});
+elements.jobList.addEventListener("dragend", (event) => {
+  event.target.closest("[data-drag-asset]")?.classList.remove("dragging");
+  draggingAsset = null;
+  suppressAssetOpenUntil = Date.now() + 350;
+  clearJobDropTargets();
+});
+elements.jobList.addEventListener("drop", withUiError(async (event) => {
+  const target = event.target.closest("[data-drop-job]");
+  const assetKey = draggingAsset?.assetKey || event.dataTransfer?.getData("application/x-flow-asset") || event.dataTransfer?.getData("text/plain");
+  const sourceJobId = draggingAsset?.sourceJobId;
+  if (!target || !assetKey || target.dataset.dropJob === sourceJobId) return;
+  event.preventDefault();
+  clearJobDropTargets();
+  const destination = state.jobs.find((job) => job.id === target.dataset.dropJob);
+  state = await send("MAP_ASSET_TO_JOB", { assetId: assetKey, jobId: target.dataset.dropJob });
+  renderState();
+  showToast(`이미지를 ${destination?.title || "선택한 장면"}으로 이동했습니다.`);
 }));
 elements.jobList.addEventListener("change", withUiError(async (event) => {
   const checkbox = event.target.closest("[data-job-ready]");

@@ -38,6 +38,15 @@ test("background supports explicit suffix asset remapping", () => {
   assert.match(backgroundSource, /job\.resultAssets = \[\]/);
 });
 
+test("moving a mapped asset removes all of its catalog aliases from other scenes", () => {
+  const mapStart = backgroundSource.indexOf("async function mapAssetToJob");
+  const mapEnd = backgroundSource.indexOf("function removeAssetAliasesFromJob", mapStart);
+  const mapSource = backgroundSource.slice(mapStart, mapEnd);
+  assert.match(mapSource, /const aliases = new Set/);
+  assert.match(mapSource, /aliases\.has/);
+  assert.match(mapSource, /job\.id !== target\.id/);
+});
+
 test("scene failure handling finalizes after one retry and keeps the queue moving", () => {
   assert.match(backgroundSource, /canAutomaticallyRetry/);
   assert.match(backgroundSource, /markSceneFailedAndContinue/);
