@@ -298,6 +298,7 @@ textarea::placeholder { color: #aaa5b0; }
 .character-name { display: flex; align-items: center; gap: 6px; font-size: 10px; font-weight: 800; }
 .character-name code { padding: 2px 4px; border-radius: 4px; color: var(--purple-dark); background: var(--purple-soft); font-size: 8px; }
 .character-meta { margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 9px; }
+.character-diagnostic { margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--purple-dark); font-size: 8px; font-weight: 700; }
 .character-badge { padding: 4px 6px; border-radius: 6px; color: var(--muted); background: #f3f1f5; font-size: 8px; font-weight: 800; }
 .character-status-controls { display: flex; align-items: center; gap: 5px; }
 .character-ready-toggle { position: relative; display: grid; place-items: center; width: 22px; height: 22px; flex: 0 0 22px; border: 1px solid var(--line); border-radius: 7px; color: #aaa4b0; background: #faf9fc; cursor: pointer; }

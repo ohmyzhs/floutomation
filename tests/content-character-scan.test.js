@@ -31,6 +31,10 @@ const monitorStart = contentSource.indexOf("async function monitorGeneration");
 const monitorEnd = contentSource.indexOf("function findCharacterCreatorInput", monitorStart);
 const monitorSource = contentSource.slice(monitorStart, monitorEnd);
 
+const submissionStart = contentSource.indexOf("async function confirmGenerationStarted");
+const submissionEnd = contentSource.indexOf("async function monitorGeneration", submissionStart);
+const submissionSource = contentSource.slice(submissionStart, submissionEnd);
+
 const recoveryStart = contentSource.indexOf("async function reconcileSceneAfterNavigation");
 const recoveryEnd = contentSource.indexOf("async function runCharacter", recoveryStart);
 const recoverySource = contentSource.slice(recoveryStart, recoveryEnd);
@@ -99,6 +103,16 @@ test("guardrail failures are surfaced as retryable generation errors", () => {
 test("scene monitoring stops promptly when the queue stop signal arrives", () => {
   assert.match(monitorSource, /if \(pauseRequested\)/);
   assert.match(monitorSource, /paused: true/);
+});
+
+test("a submitted request must show a Flow start signal and retries once with trusted Enter", () => {
+  assert.match(submissionSource, /hasBusySignal\(progressCards\) \|\| !submitControlIsEnabled\(submitButton\)/);
+  assert.match(submissionSource, /Date\.now\(\) - startedAt >= 8_000/);
+  assert.match(submissionSource, /retrySubmitted = true/);
+  assert.match(submissionSource, /submitWithTrustedEnter\(currentButton\)/);
+  assert.match(contentSource, /type: "FLOW_TRUSTED_SUBMIT"/);
+  assert.match(contentSource, /submissionDiagnostic\(submitButton, "좌표 클릭 전송"\)/);
+  assert.match(contentSource, /submissionDiagnostic\(currentButton, "키보드 Enter 재시도"\)/);
 });
 
 test("hidden Flow pages can use structural controls without viewport geometry", () => {

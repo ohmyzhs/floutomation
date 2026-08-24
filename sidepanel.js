@@ -285,9 +285,10 @@ function renderCharacters() {
     <article class="character-item ${escapeHtml(character.status)}">
       <div class="character-row">
         <span class="character-avatar">${escapeHtml(character.key.slice(0, 2))}</span>
-        <div class="character-copy" title="${escapeHtml(character.prompt)}">
+        <div class="character-copy" title="${escapeHtml([character.prompt, character.submissionDiagnostic].filter(Boolean).join("\n\n최근 전송 진단: "))}">
           <div class="character-name">${escapeHtml(character.displayName)} <code>@${escapeHtml(character.key)}</code></div>
           <div class="character-meta">${escapeHtml(character.stage || "생성 대기")} · 장면 ${Number(character.referenceCount || 0)}회</div>
+          ${character.submissionDiagnostic ? `<div class="character-diagnostic" title="${escapeHtml(character.submissionDiagnostic)}">${escapeHtml(character.submissionDiagnostic)}</div>` : ""}
         </div>
         <div class="character-status-controls">
           <label class="character-ready-toggle" title="체크하면 Flow에 이미 등록된 캐릭터로 처리합니다">

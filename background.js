@@ -403,8 +403,25 @@ async function insertTrustedText(tabId, text, { clear = false } = {}) {
 }
 
 async function pressTrustedKey(tabId, key) {
-  if (key !== "@") throw new Error("허용되지 않은 Flow 특수 키 입력입니다.");
+  if (!['@', "Enter"].includes(key)) throw new Error("허용되지 않은 Flow 특수 키 입력입니다.");
   return withFlowDebugger(tabId, async (target) => {
+    if (key === "Enter") {
+      await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", {
+        type: "rawKeyDown",
+        key: "Enter",
+        code: "Enter",
+        windowsVirtualKeyCode: 13,
+        nativeVirtualKeyCode: 13
+      });
+      await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", {
+        type: "keyUp",
+        key: "Enter",
+        code: "Enter",
+        windowsVirtualKeyCode: 13,
+        nativeVirtualKeyCode: 13
+      });
+      return { pressed: key };
+    }
     await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", {
       type: "rawKeyDown",
       key: "Shift",
@@ -1014,6 +1031,13 @@ async function handleFlowEvent(message, sender) {
     return pressTrustedKey(tabId, String(message.key || ""));
   }
 
+  if (message.type === "FLOW_TRUSTED_SUBMIT") {
+    if (!tabId || !isFlowUrl(sender.url || sender.tab?.url)) {
+      throw new Error("Google Flow 콘텐츠에서 보낸 전송 요청만 허용됩니다.");
+    }
+    return pressTrustedKey(tabId, "Enter");
+  }
+
   if (message.type === "FLOW_TRUSTED_CLICK") {
     if (!tabId || !isFlowUrl(sender.url || sender.tab?.url)) {
       throw new Error("Google Flow 콘텐츠에서 보낸 클릭 요청만 허용됩니다.");
@@ -1101,6 +1125,7 @@ async function handleFlowEvent(message, sender) {
       }
       if (message.requestSubmittedAt) job.requestSubmittedAt = Number(message.requestSubmittedAt);
       if (message.generationMode) job.generationMode = String(message.generationMode);
+      if (message.submissionDiagnostic) job.submissionDiagnostic = String(message.submissionDiagnostic);
       job.lastHeartbeatAt = Date.now();
       state.flowConnected = true;
       state.tabId = tabId;
@@ -1120,6 +1145,7 @@ async function handleFlowEvent(message, sender) {
       character.stage = String(message.stage || character.stage);
       character.progress = Math.max(character.progress, Math.min(96, Number(message.progress || 0)));
       character.detectedImages = Math.max(Number(character.detectedImages || 0), Number(message.detectedImages || 0));
+      if (message.submissionDiagnostic) character.submissionDiagnostic = String(message.submissionDiagnostic);
       character.lastHeartbeatAt = Date.now();
       state.flowConnected = true;
       state.tabId = tabId;

@@ -326,6 +326,18 @@
     await sleep(Math.max(UI_SETTLE_MS, Number(settleMs || 0)));
   }
 
+  async function submitWithTrustedEnter(element) {
+    if (!(element instanceof HTMLElement) || !document.contains(element) || !visible(element)) {
+      throw new Error("전송할 Flow 버튼이 사라졌습니다.");
+    }
+    element.focus({ preventScroll: true });
+    const response = await chrome.runtime.sendMessage({ type: "FLOW_TRUSTED_SUBMIT" });
+    if (!response?.ok) {
+      throw new Error(response?.error || "Flow 전송 키 입력을 전달하지 못했습니다.");
+    }
+    await sleep(UI_SETTLE_MS);
+  }
+
   function normalizedEditorText(input) {
     return String(input.innerText || input.textContent || "").replace(/\s+/g, " ").trim();
   }
@@ -805,6 +817,59 @@
       return "Flow에서 사용자 확인이 필요합니다. 자동 실행을 멈췄습니다. 직접 확인을 완료한 뒤 실패 작업을 재시도해 주세요.";
     }
     return message;
+  }
+
+  function submitControlIsEnabled(control) {
+    return control instanceof HTMLButtonElement
+      && document.contains(control)
+      && visible(control)
+      && !control.disabled
+      && control.getAttribute("aria-disabled") !== "true";
+  }
+
+  function submissionDiagnostic(control, action) {
+    if (!(control instanceof HTMLElement) || !document.contains(control)) {
+      return `${action} · 전송 버튼을 찾지 못함`;
+    }
+    const rect = control.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    const hit = rect.width > 0 && rect.height > 0 ? document.elementFromPoint(centerX, centerY) : null;
+    const hitText = hit instanceof HTMLElement
+      ? `${hit.tagName.toLowerCase()}${hit.getAttribute("aria-label") ? `:${hit.getAttribute("aria-label")}` : ""}`
+      : "없음";
+    const enabled = submitControlIsEnabled(control) ? "활성" : "비활성";
+    return `${action} · ${enabled} · ${Math.round(rect.width)}×${Math.round(rect.height)} · 중심 대상 ${hitText}`;
+  }
+
+  async function confirmGenerationStarted({ expectedPrompt, submitButton, baselineFailureCount = 0, onRetry }) {
+    const startedAt = Date.now();
+    let retrySubmitted = false;
+
+    while (Date.now() - startedAt < 24_000) {
+      if (pauseRequested) return false;
+      const error = findFlowError({ baselineFailureCount });
+      if (error) throw new Error(error);
+
+      const progressCards = findGenerationProgressCards(expectedPrompt);
+      if (hasBusySignal(progressCards) || !submitControlIsEnabled(submitButton)) return true;
+
+      // Flow can ignore one trusted click while leaving its submit control
+      // enabled. Verify that a request actually started, then retry exactly
+      // once instead of waiting through the full generation timeout.
+      if (!retrySubmitted && Date.now() - startedAt >= 8_000) {
+        const currentButton = findSubmitButton();
+        if (submitControlIsEnabled(currentButton)) {
+          retrySubmitted = true;
+          await onRetry?.(currentButton);
+          await submitWithTrustedEnter(currentButton);
+          continue;
+        }
+      }
+      await sleep(400);
+    }
+
+    throw new Error("Flow가 생성 요청을 시작하지 않았습니다. 프롬프트 길이와 무관하게 버튼이 활성 상태로 남았습니다. 좌표 클릭 후 키보드 전송까지 한 번 재시도했지만 생성 신호를 확인하지 못해 작업을 중단했습니다.");
   }
 
   async function monitorGeneration({ jobId, expectedImages, expectedPrompt, timeoutMs, baselineMedia, baselineSignals, baselineFailureCount = 0 }) {
@@ -1538,13 +1603,28 @@
       }
 
       const baselineMedia = captureLargeMedia();
+      const baselineFailureCount = captureGenerationFailureCards().length;
       await clickTrusted(submitButton);
-      emit({
+      await emitReliable({
         type: "FLOW_CHARACTER_PROGRESS",
         characterId: character.id,
         phase: "generating",
-        stage: "캐릭터 참조 이미지 생성 요청 전송",
-        progress: 24
+        stage: "캐릭터 생성 요청 접수 확인 중",
+        progress: 24,
+        submissionDiagnostic: submissionDiagnostic(submitButton, "좌표 클릭 전송")
+      });
+      await confirmGenerationStarted({
+        expectedPrompt: character.prompt,
+        submitButton,
+        baselineFailureCount,
+        onRetry: async (currentButton) => emitReliable({
+          type: "FLOW_CHARACTER_PROGRESS",
+          characterId: character.id,
+          phase: "generating",
+          stage: "생성 시작 신호 없음 · 키보드 전송 1회 재시도",
+          progress: 24,
+          submissionDiagnostic: submissionDiagnostic(currentButton, "키보드 Enter 재시도")
+        })
       });
 
       const result = await finishCharacterRegistration(
@@ -1644,7 +1724,33 @@
         requestSubmittedAt
       });
       await clickTrusted(submitButton);
-      await emitReliable({ type: "FLOW_JOB_PROGRESS", jobId: job.id, phase: "generating", stage: "모든 미디어에서 생성 진행 확인 중", progress: 24, generationMode: "direct", baselineFailureCount, requestSubmittedAt });
+      await emitReliable({
+        type: "FLOW_JOB_PROGRESS",
+        jobId: job.id,
+        phase: "generating",
+        stage: "일반 생성 요청 접수 확인 중",
+        progress: 24,
+        generationMode: "direct",
+        baselineFailureCount,
+        requestSubmittedAt,
+        submissionDiagnostic: submissionDiagnostic(submitButton, "좌표 클릭 전송")
+      });
+      await confirmGenerationStarted({
+        expectedPrompt: job.prompt,
+        submitButton,
+        baselineFailureCount,
+        onRetry: async (currentButton) => emitReliable({
+          type: "FLOW_JOB_PROGRESS",
+          jobId: job.id,
+          phase: "generating",
+          stage: "생성 시작 신호 없음 · 키보드 전송 1회 재시도",
+          progress: 24,
+          generationMode: "direct",
+          baselineFailureCount,
+          requestSubmittedAt,
+          submissionDiagnostic: submissionDiagnostic(currentButton, "키보드 Enter 재시도")
+        })
+      });
 
       const generationResult = await monitorGeneration({
         jobId: job.id,
