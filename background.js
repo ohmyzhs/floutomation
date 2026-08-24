@@ -591,10 +591,9 @@ async function completeTask(taskId, taskType, imagesGenerated, assets = []) {
     const task = findTask(snapshot, taskId, taskType);
     const incomingAssets = decorateTaskAssets(task, assets);
     const verifiedAssets = uniqueAssets([...(task?.resultAssets || []), ...incomingAssets]);
-    const expectedImages = Math.max(1, Number(snapshot.options.imagesPerPrompt || 2));
-    if (verifiedAssets.length < expectedImages) {
+    if (!verifiedAssets.length) {
       return scheduleSceneAutomaticRetry(
-        `Flow 완료 신호를 받았지만 다운로드 가능한 결과 이미지는 ${verifiedAssets.length}/${expectedImages}장입니다.`,
+        "Flow 완료 신호를 받았지만 다운로드 가능한 결과 이미지를 확인하지 못했습니다.",
         taskId
       );
     }
@@ -614,9 +613,12 @@ async function completeTask(taskId, taskType, imagesGenerated, assets = []) {
       task.resultAssets = uniqueAssets([...(task.resultAssets || []), ...decorateTaskAssets(task, assets)]).slice(0, 1);
     }
     else {
-      task.imagesGenerated = Math.max(0, Number(imagesGenerated || draft.options.imagesPerPrompt));
       // Preserve variable-size results up to Flow's four-image UI limit.
       const allResultAssets = uniqueAssets([...(task.resultAssets || []), ...decorateTaskAssets(task, assets)]);
+      const requestedImages = Math.max(1, Number(draft.options.imagesPerPrompt || 2));
+      const actualImages = allResultAssets.length || Math.max(0, Number(imagesGenerated || 0));
+      task.imagesGenerated = actualImages;
+      task.stage = actualImages < requestedImages ? `완료 · ${actualImages}/${requestedImages}장 생성` : "완료";
       task.resultAssetOverflowCount = Math.max(0, allResultAssets.length - MAX_TRACKED_RESULT_ASSETS);
       task.resultAssets = allResultAssets.slice(0, MAX_TRACKED_RESULT_ASSETS);
       task.generationPercentages = [];
@@ -1068,6 +1070,15 @@ async function handleFlowEvent(message, sender) {
   }
 
   if (message.type === "FLOW_JOB_FAILED") {
+    const state = await readState();
+    const job = findTask(state, message.jobId, "scene");
+    // Flow can show a terminal warning after it has already created only part
+    // of a requested batch. Those verified assets are a usable success, not a
+    // reason to submit the same prompt again and accidentally attach newer
+    // cards from a later request.
+    if (job?.resultAssets?.length) {
+      return completeTask(message.jobId, "scene", job.resultAssets.length, []);
+    }
     return scheduleSceneAutomaticRetry(String(message.error || "Flow 이미지 생성에 실패했습니다."), message.jobId);
   }
 

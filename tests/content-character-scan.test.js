@@ -31,6 +31,10 @@ const monitorStart = contentSource.indexOf("async function monitorGeneration");
 const monitorEnd = contentSource.indexOf("function findCharacterCreatorInput", monitorStart);
 const monitorSource = contentSource.slice(monitorStart, monitorEnd);
 
+const recoveryStart = contentSource.indexOf("async function reconcileSceneAfterNavigation");
+const recoveryEnd = contentSource.indexOf("async function runCharacter", recoveryStart);
+const recoverySource = contentSource.slice(recoveryStart, recoveryEnd);
+
 const promptReferenceStart = contentSource.indexOf("async function setPromptWithCharacterReferences");
 const promptReferenceEnd = contentSource.indexOf("function findSubmitButton", promptReferenceStart);
 const promptReferenceSource = contentSource.slice(promptReferenceStart, promptReferenceEnd);
@@ -102,10 +106,16 @@ test("hidden Flow pages can use structural controls without viewport geometry", 
   assert.match(contentSource, /element\.click\(\)/);
 });
 
-test("a scene cannot complete without every requested downloadable image", () => {
+test("a scene accepts a stable partial result after Flow has stopped", () => {
   assert.match(monitorSource, /detectedImages >= expectedImages/);
   assert.match(monitorSource, /다운로드 가능한 결과 이미지/);
-  assert.doesNotMatch(monitorSource, /Math\.max\(expectedImages, detectedImages\)/);
+  assert.match(monitorSource, /detectedImages > 0 && assetsStableAt/);
+  assert.match(monitorSource, /Date\.now\(\) - busyStoppedAt >= 12_000/);
+});
+
+test("recovery without a persisted media boundary never attaches existing gallery cards", () => {
+  assert.match(recoverySource, /Boolean\(job\.baselineCapturedAt\) && recoveryBaseline\.size > 0/);
+  assert.match(recoverySource, /const baselineMedia = hasStoredBaseline \? recoveryBaseline : currentMedia/);
 });
 
 test("an empty Flow project accepts the direct character creator as a zero-character scan", () => {

@@ -175,6 +175,34 @@ test("manual asset mapping overrides scan order and fixes the asset ID to one sc
   assert.deepEqual(manifest.mappingWarnings, []);
 });
 
+test("download manifest keeps automatic results when a scene also has manual mappings", () => {
+  const state = createInitialState();
+  state.jobs = createJobs([{ number: 25, prompt: "scene 25" }]);
+  state.jobs[0].resultAssets = [
+    { assetId: "auto-1", url: "https://example.test/auto-1" },
+    { assetId: "auto-2", url: "https://example.test/auto-2" }
+  ];
+  state.jobs[0].mappedAssetIds = ["manual-1", "manual-2"];
+  const manifest = buildDownloadManifest({
+    state,
+    projectTitle: "project",
+    orderedSceneAssets: [
+      ...state.jobs[0].resultAssets,
+      { assetId: "manual-1", url: "https://example.test/manual-1" },
+      { assetId: "manual-2", url: "https://example.test/manual-2" }
+    ],
+    characterAssets: []
+  });
+
+  assert.deepEqual(manifest.entries.map((entry) => entry.filename), [
+    "Scene_Images/025-01.jpeg",
+    "Scene_Images/025-02.jpeg",
+    "Scene_Images/025-03.jpeg",
+    "Scene_Images/025-04.jpeg"
+  ]);
+  assert.deepEqual(manifest.entries.map((entry) => entry.assetId), ["auto-1", "auto-2", "manual-1", "manual-2"]);
+});
+
 test("download path segments remove file-system separators", () => {
   assert.equal(sanitizePathSegment('a/b:c*?"<>|'), "a-b-c------");
 });

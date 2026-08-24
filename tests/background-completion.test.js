@@ -11,10 +11,11 @@ const manualSceneStart = backgroundSource.indexOf('if (message.type === "PREPARE
 const manualSceneEnd = backgroundSource.indexOf('if (message.type === "UPDATE_OPTIONS")', manualSceneStart);
 const manualSceneSource = backgroundSource.slice(manualSceneStart, manualSceneEnd);
 
-test("background rejects a scene completion without every requested image URL", () => {
-  assert.match(completionSource, /verifiedAssets\.length < expectedImages/);
+test("background accepts a partial scene result and retries only when no image was verified", () => {
+  assert.match(completionSource, /if \(!verifiedAssets\.length\)/);
   assert.match(completionSource, /scheduleSceneAutomaticRetry/);
   assert.match(completionSource, /다운로드 가능한 결과 이미지/);
+  assert.match(completionSource, /완료 · \$\{actualImages\}\/\$\{requestedImages\}장 생성/);
 });
 
 test("manual scene mode pauses the queue and requires a separate user completion", () => {

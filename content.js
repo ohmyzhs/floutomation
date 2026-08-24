@@ -836,8 +836,8 @@
       const detectedImages = resultAssets.length;
       if (detectedImages !== lastDetectedCount) {
         lastDetectedCount = detectedImages;
-        assetsStableAt = detectedImages >= expectedImages ? Date.now() : null;
-      } else if (detectedImages >= expectedImages && !assetsStableAt) {
+        assetsStableAt = detectedImages > 0 ? Date.now() : null;
+      } else if (detectedImages > 0 && !assetsStableAt) {
         assetsStableAt = Date.now();
       }
 
@@ -859,6 +859,12 @@
       }
 
       if (seenBusy && busyStoppedAt && Date.now() - busyStoppedAt >= 12_000 && elapsed >= 30_000) {
+        if (detectedImages > 0 && assetsStableAt && Date.now() - assetsStableAt >= 4_000) {
+          return {
+            imagesGenerated: detectedImages,
+            assets: resultAssets
+          };
+        }
         throw new Error(`Flow 생성이 끝났지만 다운로드 가능한 결과 이미지 ${expectedImages}장을 확인하지 못했습니다.`);
       }
 
@@ -1432,7 +1438,11 @@
       });
 
       const recoveryBaseline = new Set(Array.isArray(job.baselineMedia) ? job.baselineMedia : []);
-      const hasStoredBaseline = Boolean(job.baselineCapturedAt);
+      // A submit timestamp without its accompanying media snapshot cannot
+      // identify which existing cards belong to this request. Treat the
+      // current gallery as the boundary in that case instead of attaching the
+      // newest unrelated cards to the recovering scene.
+      const hasStoredBaseline = Boolean(job.baselineCapturedAt) && recoveryBaseline.size > 0;
       const progressCardsBeforeWorkspace = findGenerationProgressCards(job.prompt);
       const busyBeforeWorkspace = hasBusySignal(progressCardsBeforeWorkspace);
       await enterDirectMediaWorkspace();
@@ -1458,9 +1468,7 @@
           baselineCapturedAt: Date.now()
         });
       } else {
-        const baselineMedia = job.requestSubmittedAt || hasStoredBaseline
-          ? recoveryBaseline
-          : currentMedia;
+        const baselineMedia = hasStoredBaseline ? recoveryBaseline : currentMedia;
         const generationResult = await monitorGeneration({
           jobId: job.id,
           expectedImages: Number(options.imagesPerPrompt || 2),
@@ -1615,6 +1623,10 @@
         return;
       }
 
+      // Let Flow finish lazy-loading the existing gallery before the boundary
+      // snapshot. Otherwise old cards that appeared a moment after entering
+      // the workspace can look like the next request's newest results.
+      await sleep(UI_SETTLE_MS);
       const baselineMedia = captureLargeMedia();
       const baselineSignals = captureCompletionSignals();
       const baselineFailureCount = captureGenerationFailureCards().length;
