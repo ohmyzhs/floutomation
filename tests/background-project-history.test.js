@@ -30,3 +30,12 @@ test("intro character recovery reloads the active project when saved bindings be
   assert.match(ensureSource, /loadCurrentProjectCharacters/);
   assert.match(source, /message\.type === "ENSURE_CURRENT_PROJECT_CHARACTERS"/);
 });
+
+test("asset mappings are archived per project and restored onto matching scene slots", () => {
+  assert.match(source, /function archiveProjectMappings/);
+  assert.match(source, /function restoreProjectMappings/);
+  assert.match(source, /const snapshot = projectMappingSnapshot\(state\)/);
+  assert.match(source, /currentSlots = new Set/);
+  assert.match(source, /restoreProjectMappings\(jobs, savedProjectProfile\)/);
+  assert.match(source, /createRestoredMappingJobs\(profile\)/);
+});

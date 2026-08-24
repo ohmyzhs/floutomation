@@ -66,3 +66,32 @@ test("saving the same project refreshes its characters without discarding prior 
   assert.deepEqual(profile.registeredKeys, ["widow", "daughter"]);
   assert.equal(profile.characters[0].prompt, "updated");
 });
+
+test("project history keeps asset mappings by project ID while character-only saves preserve them", () => {
+  const first = upsertProjectCharacterProfile({}, buildProjectCharacterProfile({
+    projectId: "project-a",
+    characters: [{ key: "widow", prompt: "portrait" }],
+    mappingJobs: [{
+      sourceMode: "scene",
+      sourceNumber: 25,
+      title: "장면 025",
+      mappedAssetIds: ["manual-25"],
+      assets: [
+        { assetId: "auto-25a", url: "https://example.test/25a" },
+        { assetId: "manual-25", url: "https://example.test/25b" }
+      ]
+    }],
+    now: 100
+  }));
+  const refreshed = upsertProjectCharacterProfile(first, buildProjectCharacterProfile({
+    projectId: "project-a",
+    characters: [{ key: "widow", prompt: "new portrait" }],
+    now: 200
+  }));
+  const profile = findProjectCharacterProfile(refreshed, "project-a");
+
+  assert.equal(profile.mappingJobs.length, 1);
+  assert.equal(profile.mappingJobs[0].sourceNumber, 25);
+  assert.deepEqual(profile.mappingJobs[0].mappedAssetIds, ["manual-25"]);
+  assert.deepEqual(profile.mappingJobs[0].assets.map((asset) => asset.assetId), ["auto-25a", "manual-25"]);
+});

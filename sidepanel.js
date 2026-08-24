@@ -629,7 +629,8 @@ async function checkFlow({ notify = true } = {}) {
     elements.openFlowButton.hidden = Boolean(result.connected);
     if (!notify) return result;
     if (!result.connected) showToast(result.error || "Flow 프로젝트 탭을 열어 주세요.");
-    else if (result.project?.savedProfile) showToast(`Flow 프로젝트와 연결되었습니다. 저장된 캐릭터 ${result.project.savedProfile.characterCount}명을 불러올 수 있습니다.`);
+    else if (result.project?.restoredMappingCount) showToast(`Flow 프로젝트와 연결되었습니다. 저장된 장면 매핑 ${result.project.restoredMappingCount}개를 복원했습니다. Flow 목록 새로고침으로 실제 이미지도 확인하세요.`);
+    else if (result.project?.savedProfile) showToast(`Flow 프로젝트와 연결되었습니다. 저장된 캐릭터 ${result.project.savedProfile.characterCount}명과 매핑 ${result.project.savedProfile.mappingCount || 0}개를 불러올 수 있습니다.`);
     else showToast("Flow 프로젝트와 연결되었습니다. 캐릭터 작업은 이 프로젝트 ID에 자동 보관됩니다.");
     return result;
   } finally {

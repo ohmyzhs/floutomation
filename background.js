@@ -150,6 +150,7 @@ function projectProfileSummary(profile) {
     projectTitle: profile.projectTitle,
     characterCount: profile.characters.length,
     registeredCount: profile.registeredKeys.length,
+    mappingCount: Array.isArray(profile.mappingJobs) ? profile.mappingJobs.length : 0,
     updatedAt: profile.updatedAt
   };
 }
@@ -171,6 +172,100 @@ function archiveProjectCharacters(state) {
   });
   const operation = projectHistoryMutation.then(async () => {
     const history = await readProjectHistory();
+    const next = upsertProjectCharacterProfile(history, profile);
+    await chrome.storage.local.set({ [PROJECT_HISTORY_KEY]: next });
+    return findProjectCharacterProfile(next, profile.projectId);
+  });
+  projectHistoryMutation = operation.catch(() => {});
+  return operation;
+}
+
+function mappingSlotKey(job) {
+  const sourceMode = String(job?.sourceMode || "scene").trim() || "scene";
+  const sourceNumber = Math.max(1, Number(job?.sourceNumber || job?.number || 1));
+  return `${sourceMode}:${sourceNumber}`;
+}
+
+function projectMappingSnapshot(state) {
+  const catalog = Array.isArray(state?.assetCatalog) ? state.assetCatalog : [];
+  return (state?.jobs || []).flatMap((job) => {
+    const mappedIds = [...new Set((job.mappedAssetIds || []).map(String).filter(Boolean))];
+    const mappedAssets = mappedIds
+      .map((id) => catalog.find((asset) => [asset?.assetId, asset?.detailUrl, asset?.url].includes(id)))
+      .filter(Boolean);
+    const assets = uniqueAssets([...(job.resultAssets || []), ...mappedAssets]);
+    if (!assets.length && !mappedIds.length) return [];
+    return [{
+      sourceMode: job.sourceMode || "scene",
+      sourceNumber: job.sourceNumber || job.number,
+      number: job.number || job.sourceNumber,
+      title: job.title || "",
+      characterRefs: job.characterRefs || [],
+      imagesGenerated: Math.max(Number(job.imagesGenerated || 0), assets.length),
+      assets,
+      mappedAssetIds: mappedIds
+    }];
+  });
+}
+
+function restoreProjectMappings(jobs, profile) {
+  const savedBySlot = new Map((profile?.mappingJobs || []).map((job) => [mappingSlotKey(job), job]));
+  let restored = 0;
+  for (const job of jobs || []) {
+    const saved = savedBySlot.get(mappingSlotKey(job));
+    if (!saved) continue;
+    const assets = uniqueAssets([...(job.resultAssets || []), ...(saved.assets || [])]);
+    const mappedIds = [...new Set([...(job.mappedAssetIds || []), ...(saved.mappedAssetIds || [])].map(String).filter(Boolean))];
+    if (!assets.length && !mappedIds.length) continue;
+    job.resultAssets = assets.slice(0, MAX_TRACKED_RESULT_ASSETS);
+    job.resultAssetOverflowCount = Math.max(0, assets.length - MAX_TRACKED_RESULT_ASSETS);
+    job.mappedAssetIds = mappedIds;
+    job.imagesGenerated = Math.max(Number(job.imagesGenerated || 0), Number(saved.imagesGenerated || 0), assets.length);
+    job.status = "completed";
+    job.stage = "저장된 프로젝트 매핑 복원";
+    job.progress = 100;
+    job.completedAt = job.completedAt || Date.now();
+    job.error = null;
+    restored += 1;
+  }
+  return restored;
+}
+
+function createRestoredMappingJobs(profile) {
+  const prompts = (profile?.mappingJobs || []).map((saved, index) => ({
+    number: Math.max(1, Number(saved.sourceNumber || saved.number || index + 1)),
+    sourceNumber: Math.max(1, Number(saved.sourceNumber || saved.number || index + 1)),
+    sourceMode: saved.sourceMode || "scene",
+    title: saved.title || `장면 ${String(saved.sourceNumber || saved.number || index + 1).padStart(3, "0")}`,
+    prompt: "",
+    characterRefs: saved.characterRefs || []
+  }));
+  const jobs = createJobs(prompts).map((job, index) => ({ ...job, index }));
+  restoreProjectMappings(jobs, profile);
+  return jobs;
+}
+
+function archiveProjectMappings(state) {
+  if (!state?.flowProjectId) return Promise.resolve(null);
+  const snapshot = projectMappingSnapshot(state);
+  const currentSlots = new Set((state.jobs || []).map(mappingSlotKey));
+  const operation = projectHistoryMutation.then(async () => {
+    const history = await readProjectHistory();
+    const previous = findProjectCharacterProfile(history, state.flowProjectId);
+    // An intro-only queue must not erase the scene mappings previously saved
+    // for this project. Replace records only for slots that are actually in
+    // the current queue; an empty current slot intentionally clears its map.
+    const mappingJobs = [
+      ...(previous?.mappingJobs || []).filter((job) => !currentSlots.has(mappingSlotKey(job))),
+      ...snapshot
+    ];
+    const profile = buildProjectCharacterProfile({
+      projectId: state.flowProjectId,
+      projectTitle: state.flowProjectTitle,
+      characters: state.characters,
+      registeredKeys: state.lastFlowRegisteredKeys,
+      mappingJobs
+    });
     const next = upsertProjectCharacterProfile(history, profile);
     await chrome.storage.local.set({ [PROJECT_HISTORY_KEY]: next });
     return findProjectCharacterProfile(next, profile.projectId);
@@ -652,6 +747,7 @@ async function completeTask(taskId, taskType, imagesGenerated, assets = []) {
     }
   });
   if (taskType === "character") await archiveProjectCharacters(state);
+  if (taskType === "scene") await archiveProjectMappings(state);
 
   if (state.status === "waiting" && state.nextRunAt) {
     await chrome.alarms.create(QUEUE_ALARM, { when: state.nextRunAt });
@@ -1174,6 +1270,7 @@ async function downloadProject() {
       draft.lastFlowSceneImageCount = Array.isArray(scan.sceneAssets) ? scan.sceneAssets.length : null;
       draft.lastFlowImageSyncAt = Date.now();
     });
+    await archiveProjectMappings(synchronizedState);
 
     const manifest = buildDownloadManifest({
       state: synchronizedState,
@@ -1255,6 +1352,7 @@ async function scanProjectAssets() {
     draft.lastFlowSceneImageCount = draft.assetCatalog.length;
     draft.lastFlowImageSyncAt = Date.now();
   });
+  await archiveProjectMappings(state);
   return { state, assetCount: state.assetCatalog.length, removedMappings, projectTitle: scan.projectTitle };
 }
 
@@ -1267,7 +1365,7 @@ function assertMappingReady(state) {
 async function mapAssetToJob(assetId, jobId) {
   const normalizedAssetId = String(assetId || "").trim();
   if (!normalizedAssetId) throw new Error("매핑할 asset ID가 없습니다.");
-  return updateState((state) => {
+  const state = await updateState((state) => {
     assertMappingReady(state);
     if (!state.assetCatalog.some((asset) => asset.assetId === normalizedAssetId || asset.detailUrl === normalizedAssetId || asset.url === normalizedAssetId)) {
       throw new Error("현재 Flow 미디어 목록에서 해당 이미지를 찾지 못했습니다. 먼저 이미지 목록을 새로고침하세요.");
@@ -1286,6 +1384,8 @@ async function mapAssetToJob(assetId, jobId) {
     target.mappedAssetIds = [...(target.mappedAssetIds || []), key];
     target.error = null;
   });
+  await archiveProjectMappings(state);
+  return state;
 }
 
 function removeAssetAliasesFromJob(job, requestedKey) {
@@ -1302,7 +1402,7 @@ function removeAssetAliasesFromJob(job, requestedKey) {
 
 async function unmapAssetFromJob(assetId, jobId) {
   const key = String(assetId || "").trim();
-  return updateState((state) => {
+  const state = await updateState((state) => {
     assertMappingReady(state);
     const target = state.jobs.find((job) => job.id === jobId);
     if (target) {
@@ -1311,6 +1411,8 @@ async function unmapAssetFromJob(assetId, jobId) {
     }
     for (const job of state.jobs) removeAssetAliasesFromJob(job, key);
   });
+  await archiveProjectMappings(state);
+  return state;
 }
 
 async function reassignAssetsFromPosition(startAssetKey, startJobId) {
@@ -1347,6 +1449,7 @@ async function reassignAssetsFromPosition(startAssetKey, startJobId) {
       job.error = null;
     });
   });
+  await archiveProjectMappings(state);
   return { state, mappedCount: plan.assignments.length, startAssetIndex: plan.startAssetIndex, startJobIndex: plan.startJobIndex };
 }
 
@@ -1365,6 +1468,9 @@ async function handleUiMessage(message) {
     const current = await readState();
     const reuseExistingCharacters = Boolean(message.reuseExistingCharacters);
     const flowProject = await findCurrentFlowProject(current.tabId, { preferActive: true });
+    const savedProjectProfile = flowProject?.projectId
+      ? findProjectCharacterProfile(await readProjectHistory(), flowProject.projectId)
+      : null;
     if (reuseExistingCharacters
       && current.characters.length
       && (!current.flowProjectId || !flowProject?.projectId || current.flowProjectId !== flowProject.projectId)) {
@@ -1389,6 +1495,7 @@ async function handleUiMessage(message) {
           alreadyRegistered: false
         });
       carryForwardCompletedTasks({ characters, jobs }, previousState);
+      restoreProjectMappings(jobs, savedProjectProfile);
       state.jobs = jobs;
       state.characters = characters;
       state.queueMode = isIntroQueue ? "intro" : "scene";
@@ -1421,6 +1528,7 @@ async function handleUiMessage(message) {
       }
     });
     await archiveProjectCharacters(nextState);
+    await archiveProjectMappings(nextState);
     return nextState;
   }
 
@@ -1709,12 +1817,20 @@ async function handleUiMessage(message) {
     try {
       const diagnostics = await sendToTab(flowProject.tab.id, { type: "GET_FLOW_DIAGNOSTICS" });
       const profile = findProjectCharacterProfile(await readProjectHistory(), flowProject.projectId);
+      let restoredMappingCount = 0;
       await updateState((draft) => {
         draft.flowConnected = Boolean(diagnostics?.ready);
         if ((!draft.flowProjectId && !draft.characters.length) || draft.flowProjectId === flowProject.projectId) {
           draft.tabId = flowProject.tab.id;
           draft.flowProjectId = flowProject.projectId;
           draft.flowProjectTitle = flowProject.projectTitle;
+          if (!draft.jobs.length && !draft.characters.length && profile?.mappingJobs?.length) {
+            draft.jobs = createRestoredMappingJobs(profile);
+            draft.status = "completed";
+            draft.phase = "scenes";
+            draft.lastError = null;
+            restoredMappingCount = draft.jobs.length;
+          }
         }
       });
       return {
@@ -1725,6 +1841,7 @@ async function handleUiMessage(message) {
           projectId: flowProject.projectId,
           projectTitle: flowProject.projectTitle,
           savedProfile: projectProfileSummary(profile),
+          restoredMappingCount,
           activeQueueProjectId: state.flowProjectId || ""
         }
       };
