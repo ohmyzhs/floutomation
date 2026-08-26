@@ -630,8 +630,18 @@ async function checkFlow({ notify = true } = {}) {
     elements.openFlowButton.hidden = Boolean(result.connected);
     if (!notify) return result;
     if (!result.connected) showToast(result.error || "Flow 프로젝트 탭을 열어 주세요.");
-    else if (result.project?.restoredMappingCount || result.project?.restoredCharacterCount) showToast(`Flow 프로젝트와 연결되었습니다. 저장된 캐릭터 ${result.project.restoredCharacterCount || 0}명과 매핑 ${result.project.restoredMappingCount || 0}개를 불러왔습니다. Flow 목록 새로고침으로 실제 이미지도 확인하세요.`);
-    else if (result.project?.savedProfile) showToast(`Flow 프로젝트와 연결되었습니다. 저장된 캐릭터 ${result.project.savedProfile.characterCount}명과 매핑 ${result.project.savedProfile.mappingCount || 0}개를 불러올 수 있습니다.`);
+    else if (result.project?.restoredMappingCount || result.project?.restoredCharacterCount) {
+      const mappingCount = result.project.restoredMappingCount || 0;
+      const mappingNote = mappingCount
+        ? "Flow 목록 새로고침으로 실제 이미지도 확인하세요."
+        : "저장된 장면 매핑은 없어 캐릭터만 복원했습니다. 기존 장면은 수동 매핑이 필요합니다.";
+      showToast(`Flow 프로젝트와 연결되었습니다. 저장된 캐릭터 ${result.project.restoredCharacterCount || 0}명과 매핑 ${mappingCount}개를 불러왔습니다. ${mappingNote}`);
+    } else if (result.project?.savedProfile) {
+      const mappingCount = result.project.savedProfile.mappingCount || 0;
+      showToast(mappingCount
+        ? `Flow 프로젝트와 연결되었습니다. 저장된 캐릭터 ${result.project.savedProfile.characterCount}명과 매핑 ${mappingCount}개를 확인했습니다.`
+        : `Flow 프로젝트와 연결되었습니다. 캐릭터 ${result.project.savedProfile.characterCount}명만 복원되었습니다. 이 프로젝트에는 저장된 장면 매핑이 없어 기존 장면은 자동 복원할 수 없습니다.`);
+    }
     else showToast("Flow 프로젝트와 연결되었습니다. 캐릭터 작업은 이 프로젝트 ID에 자동 보관됩니다.");
     return result;
   } finally {

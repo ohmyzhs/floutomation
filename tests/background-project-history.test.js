@@ -45,7 +45,7 @@ test("checking a different Flow project adopts its saved profile instead of only
   const checkEnd = source.indexOf('throw new Error(`지원하지 않는 메시지입니다', checkStart);
   const checkSource = source.slice(checkStart, checkEnd);
   assert.match(checkSource, /projectChanged/);
-  assert.match(checkSource, /const shouldRestore = stateIsEmpty \|\| projectChanged/);
+  assert.match(checkSource, /const shouldRestore = draftStateIsEmpty\s+\|\| draftProjectChanged/);
   assert.match(checkSource, /draft\.characters = createCharacters\(profile\.characters, \{ alreadyRegistered: true \}\)/);
   assert.match(checkSource, /restoredCharacterCount/);
   assert.match(checkSource, /hadNoProject && Boolean\(profile\)/);

@@ -1846,27 +1846,46 @@ async function handleUiMessage(message) {
     if (!flowProject?.tab?.id) return { connected: false, error: "열린 Flow 프로젝트 탭이 없습니다." };
     try {
       const diagnostics = await sendToTab(flowProject.tab.id, { type: "GET_FLOW_DIAGNOSTICS" });
-      const profile = findProjectCharacterProfile(await readProjectHistory(), flowProject.projectId);
+      let profile = findProjectCharacterProfile(await readProjectHistory(), flowProject.projectId);
       let restoredMappingCount = 0;
       let restoredCharacterCount = 0;
+      let importedFromFlow = false;
+      const projectChanged = Boolean(state.flowProjectId && state.flowProjectId !== flowProject.projectId);
+      const stateIsEmpty = !state.jobs.length && !state.characters.length;
+
+      // Older projects may predate project-history snapshots. Discover the
+      // registered Flow characters so an intro/thumbnail run can still reuse
+      // them without requiring the old scene prompt file to be dropped again.
+      // Exact scene mappings remain unavailable until a mapping snapshot exists.
+      if (!profile && !state.activeJobId && (stateIsEmpty || projectChanged)) {
+        try {
+          const imported = await loadCurrentProjectCharacters();
+          importedFromFlow = Boolean(imported?.importedFromFlow);
+          profile = findProjectCharacterProfile(await readProjectHistory(), flowProject.projectId);
+        } catch {
+          // Keep CHECK_FLOW useful even when the current Flow surface cannot
+          // expose its character library yet; the normal file-drop recovery
+          // path can retry discovery later.
+        }
+      }
       await updateState((draft) => {
         draft.flowConnected = Boolean(diagnostics?.ready);
         if (draft.activeJobId) return;
         const hadNoProject = !draft.flowProjectId;
-        const projectChanged = Boolean(draft.flowProjectId && draft.flowProjectId !== flowProject.projectId);
-        const stateIsEmpty = !draft.jobs.length && !draft.characters.length;
+        const draftProjectChanged = Boolean(draft.flowProjectId && draft.flowProjectId !== flowProject.projectId);
+        const draftStateIsEmpty = !draft.jobs.length && !draft.characters.length;
         draft.tabId = flowProject.tab.id;
         draft.flowProjectId = flowProject.projectId;
         draft.flowProjectTitle = flowProject.projectTitle;
         const hasSavedMappings = Boolean(profile?.mappingJobs?.length);
         const noCurrentJobs = !draft.jobs.length;
-        const shouldRestore = stateIsEmpty
-          || projectChanged
+        const shouldRestore = draftStateIsEmpty
+          || draftProjectChanged
           || (hadNoProject && Boolean(profile))
           || (noCurrentJobs && hasSavedMappings);
         if (!shouldRestore) return;
 
-        draft.assetCatalog = projectChanged ? [] : draft.assetCatalog;
+        draft.assetCatalog = draftProjectChanged ? [] : draft.assetCatalog;
         if (profile) {
           draft.characters = createCharacters(profile.characters, { alreadyRegistered: true });
           draft.jobs = createRestoredMappingJobs(profile);
@@ -1898,6 +1917,7 @@ async function handleUiMessage(message) {
           savedProfile: projectProfileSummary(profile),
           restoredCharacterCount,
           restoredMappingCount,
+          importedFromFlow,
           activeQueueProjectId: state.flowProjectId || ""
         }
       };
