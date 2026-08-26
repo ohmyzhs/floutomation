@@ -917,6 +917,7 @@
     baselineFailureCount = 0,
     findSubmitControl = findSubmitButton,
     retrySubmit = submitWithTrustedEnter,
+    additionalStartSignal = null,
     failureMessage = "Flow가 생성 요청을 시작하지 않았습니다. 프롬프트 길이와 무관하게 버튼이 활성 상태로 남았습니다. 좌표 클릭 후 키보드 전송까지 한 번 재시도했지만 생성 신호를 확인하지 못해 작업을 중단했습니다.",
     onRetry
   }) {
@@ -929,6 +930,7 @@
       if (error) throw new Error(error);
 
       const progressCards = findGenerationProgressCards(expectedPrompt);
+      if (additionalStartSignal?.()) return true;
       const liveInput = input instanceof HTMLElement && document.contains(input) ? input : findPromptInput();
       const currentSubmitButton = findSubmitControl(liveInput);
       if (hasBusySignal(progressCards) || (currentSubmitButton && !submitControlIsEnabled(currentSubmitButton))) return true;
@@ -1432,6 +1434,13 @@
     }) || null;
   }
 
+  function findCharacterRegistrationSurface() {
+    if (!/\/character\/[^/?#]+(?:\/|$)/i.test(location.pathname)) return null;
+    const nameControl = findCharacterNameControl();
+    const doneButton = findExactActionButton(["완료", "Done"]);
+    return nameControl && doneButton ? { nameControl, doneButton } : null;
+  }
+
   async function finishCharacterRegistration(character, baselineMedia, timeoutMs) {
     const startedAt = Date.now();
     let lastProgressSentAt = 0;
@@ -1645,12 +1654,44 @@
     if (restartConfiguration) await runJob(job, options);
   }
 
+  function emitCharacterRegistrationResult(character, result) {
+    if (result.paused) {
+      emit({ type: "FLOW_CHARACTER_PAUSED", characterId: character.id, stage: "캐릭터 생성 중단 · 다시 생성 대기" });
+    } else if (result.completed) {
+      emit({
+        type: "FLOW_CHARACTER_COMPLETED",
+        characterId: character.id,
+        referenceImages: result.referenceImages,
+        assets: result.assets
+      });
+    } else {
+      emit({ type: "FLOW_CHARACTER_NEEDS_REVIEW", characterId: character.id, referenceImages: result.referenceImages });
+    }
+  }
+
   async function runCharacter(character, options) {
     activeJobId = character.id;
     activeTaskType = "character";
     pauseRequested = false;
 
     try {
+      if (findCharacterRegistrationSurface()) {
+        emit({
+          type: "FLOW_CHARACTER_PROGRESS",
+          characterId: character.id,
+          phase: "generating",
+          stage: "생성된 캐릭터 상세 화면 복구 · 이름 저장 중",
+          progress: 35
+        });
+        const recoveredResult = await finishCharacterRegistration(
+          character,
+          new Set(),
+          Math.min(5 * 60_000, Number(options.generationTimeoutMs || 5 * 60_000))
+        );
+        emitCharacterRegistrationResult(character, recoveredResult);
+        return;
+      }
+
       emit({
         type: "FLOW_CHARACTER_PROGRESS",
         characterId: character.id,
@@ -1701,6 +1742,7 @@
         baselineFailureCount,
         findSubmitControl: findCharacterSubmitButton,
         retrySubmit: clickTrusted,
+        additionalStartSignal: findCharacterRegistrationSurface,
         failureMessage: "Flow 캐릭터 만들기 버튼을 찾았지만 생성 요청이 시작되지 않았습니다. button.click 직접 실행 후 같은 버튼에 실제 좌표 클릭까지 재시도했으나 생성 신호를 확인하지 못했습니다.",
         onRetry: async (currentButton) => emitReliable({
           type: "FLOW_CHARACTER_PROGRESS",
@@ -1717,18 +1759,7 @@
         baselineMedia,
         Number(options.generationTimeoutMs || 10 * 60_000)
       );
-      if (result.paused) {
-        emit({ type: "FLOW_CHARACTER_PAUSED", characterId: character.id, stage: "캐릭터 생성 중단 · 다시 생성 대기" });
-      } else if (result.completed) {
-        emit({
-          type: "FLOW_CHARACTER_COMPLETED",
-          characterId: character.id,
-          referenceImages: result.referenceImages,
-          assets: result.assets
-        });
-      } else {
-        emit({ type: "FLOW_CHARACTER_NEEDS_REVIEW", characterId: character.id, referenceImages: result.referenceImages });
-      }
+      emitCharacterRegistrationResult(character, result);
     } catch (error) {
       emit({ type: "FLOW_CHARACTER_FAILED", characterId: character.id, error: String(error?.message || error) });
     } finally {

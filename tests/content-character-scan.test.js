@@ -145,6 +145,19 @@ test("character generation clicks the exact arrow_forward 만들기 button direc
   assert.match(contentSource, /retrySubmit: clickTrusted/);
 });
 
+test("character detail navigation is a start signal and failed retries resume registration", () => {
+  assert.match(contentSource, /function findCharacterRegistrationSurface/);
+  assert.ok(contentSource.includes('if (!/\\/character\\/[^/?#]+(?:\\/|$)/i.test(location.pathname)) return null;'));
+  assert.match(contentSource, /const nameControl = findCharacterNameControl\(\)/);
+  assert.match(contentSource, /findExactActionButton\(\["완료", "Done"\]\)/);
+  assert.match(submissionSource, /additionalStartSignal = null/);
+  assert.match(submissionSource, /if \(additionalStartSignal\?\.\(\)\) return true/);
+  assert.match(contentSource, /additionalStartSignal: findCharacterRegistrationSurface/);
+  assert.match(contentSource, /if \(findCharacterRegistrationSurface\(\)\)/);
+  assert.match(contentSource, /생성된 캐릭터 상세 화면 복구 · 이름 저장 중/);
+  assert.match(registrationSource, /setFormControlValue\(nameControl, character\.key\)/);
+});
+
 test("hidden Flow pages can use structural controls without viewport geometry", () => {
   assert.match(contentSource, /document\.visibilityState === "hidden"/);
   assert.match(contentSource, /element\.click\(\)/);
