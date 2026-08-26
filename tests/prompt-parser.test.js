@@ -191,6 +191,26 @@ test("intro-hook scene headers accept moderation notes and parenthetical labels"
   assert.match(result.prompts[1].prompt, /lighthouse/);
 });
 
+test("intro-hook accepts decorated A/B prompt markers from exported files", () => {
+  const result = analyzePrompts(`
+===== 씬 1 =====
+--- [A] 이미지 프롬프트 ---
+@boreum, a Joseon courtyard at dusk, cinematic illustration
+--- [B] 영상 프롬프트 ---
+ACTION: hold still
+===== 씬 2 =====
+--- [A] 이미지 프롬프트 (영어, 복사용): ---
+@duman, a moonlit gate, cinematic illustration
+--- [B] 영상 프롬프트 ---
+ACTION: slow push-in
+`, { mode: "intro", knownCharacterKeys: ["boreum", "duman"] });
+
+  assert.equal(result.prompts.length, 2);
+  assert.deepEqual(result.prompts.map((prompt) => prompt.number), [1, 2]);
+  assert.ok(!result.prompts[0].prompt.includes("ACTION: hold still"));
+  assert.ok(!result.prompts[1].prompt.includes("ACTION: slow push-in"));
+});
+
 test("intro-hook mode warns and blocks references absent from the current project", () => {
   const result = analyzePrompts(`
 ===== 씬 1 =====
