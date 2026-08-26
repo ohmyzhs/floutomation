@@ -1858,7 +1858,12 @@ async function handleUiMessage(message) {
         draft.tabId = flowProject.tab.id;
         draft.flowProjectId = flowProject.projectId;
         draft.flowProjectTitle = flowProject.projectTitle;
-        const shouldRestore = stateIsEmpty || projectChanged || (hadNoProject && Boolean(profile));
+        const hasSavedMappings = Boolean(profile?.mappingJobs?.length);
+        const noCurrentJobs = !draft.jobs.length;
+        const shouldRestore = stateIsEmpty
+          || projectChanged
+          || (hadNoProject && Boolean(profile))
+          || (noCurrentJobs && hasSavedMappings);
         if (!shouldRestore) return;
 
         draft.assetCatalog = projectChanged ? [] : draft.assetCatalog;

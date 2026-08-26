@@ -49,6 +49,7 @@ test("checking a different Flow project adopts its saved profile instead of only
   assert.match(checkSource, /draft\.characters = createCharacters\(profile\.characters, \{ alreadyRegistered: true \}\)/);
   assert.match(checkSource, /restoredCharacterCount/);
   assert.match(checkSource, /hadNoProject && Boolean\(profile\)/);
+  assert.match(checkSource, /noCurrentJobs && hasSavedMappings/);
 });
 
 test("intro queues do not carry restored scene mapping cards into a new intro run", () => {
