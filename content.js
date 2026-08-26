@@ -307,10 +307,10 @@
     if (!(element instanceof HTMLElement) || !document.contains(element) || !visible(element)) {
       throw new Error("클릭할 Flow 화면 요소가 사라졌습니다.");
     }
+    element.focus?.({ preventScroll: true });
     const rect = element.getBoundingClientRect();
     const hiddenPage = document.visibilityState === "hidden";
     if (hiddenPage || rect.width <= 0 || rect.height <= 0) {
-      element.focus?.({ preventScroll: true });
       element.click();
       await sleep(Math.max(UI_SETTLE_MS, Number(settleMs || 0)));
       return { ok: true, clicked: true, synthetic: true };
@@ -593,21 +593,58 @@
     });
   }
 
+  function submitButtonDescriptor(button) {
+    return accessibleDescriptor(button)
+      + ` ${button.getAttribute("data-testid") || ""} ${button.getAttribute("data-test-id") || ""}`;
+  }
+
+  function submitButtonScore(button, input, depth) {
+    if (!(button instanceof HTMLElement) || !visible(button)) return Number.NEGATIVE_INFINITY;
+    const descriptor = submitButtonDescriptor(button).replace(/\s+/g, " ").trim();
+    const compact = descriptor.replace(/\s+/g, "").toLowerCase();
+    const type = String(button.getAttribute("type") || "").toLowerCase();
+    const role = String(button.getAttribute("role") || "").toLowerCase();
+    const looksLikeSubmit = /(?:arrow_forward|arrow_right_alt|send|play_arrow|east|만들기|생성|전송|보내기|create|generate|submit)/i.test(compact);
+    const explicitSubmitLabel = /(?:만들기|생성|전송|보내기|create|generate|submit|send)/i.test(descriptor);
+    const hasSubmitTestId = /(?:submit|send|create|generate)/i.test(`${button.getAttribute("data-testid") || ""} ${button.getAttribute("data-test-id") || ""}`);
+    const form = input?.closest("form");
+    const associatedForm = button.getAttribute("form");
+    const sameForm = Boolean(form && (button.closest("form") === form || (associatedForm && associatedForm === form.id)));
+    if (!looksLikeSubmit && type !== "submit" && !hasSubmitTestId) return Number.NEGATIVE_INFINITY;
+
+    let score = 0;
+    if (type === "submit") score += 140;
+    if (sameForm) score += 100;
+    if (role === "button") score += 8;
+    if (explicitSubmitLabel) score += 55;
+    if (hasSubmitTestId) score += 45;
+    if (/arrow_forward|arrow_right_alt|send|play_arrow|east/i.test(compact)) score += 30;
+    if (/close|뒤로|back|삭제|delete|cancel/i.test(descriptor)) score -= 120;
+    return score - depth * 5;
+  }
+
   function findSubmitButton(input = findPromptInput()) {
-    const isSubmit = (button, allowIconOnly = false) => {
-      if (!visible(button)) return false;
-      const text = String(button.textContent || "").replace(/\s+/g, "").toLowerCase();
-      const label = String(button.getAttribute("aria-label") || "").replace(/\s+/g, "").toLowerCase();
-      return (text.includes("arrow_forward") || /arrow_forward|만들기|create|generate/.test(label))
-        && (allowIconOnly || /만들기|create|generate/.test(`${text}${label}`));
+    const candidates = new Map();
+    const addCandidates = (root, depth) => {
+      if (!(root instanceof HTMLElement)) return;
+      root.querySelectorAll("button, [role=\"button\"]").forEach((button) => {
+        const score = submitButtonScore(button, input, depth);
+        if (score === Number.NEGATIVE_INFINITY) return;
+        const previous = candidates.get(button);
+        if (!previous || score > previous) candidates.set(button, score);
+      });
     };
 
+    const form = input?.closest("form");
+    if (form) addCandidates(form, 0);
     let node = input?.parentElement || null;
-    for (let depth = 0; node && depth < 7; depth += 1, node = node.parentElement) {
-      const match = Array.from(node.querySelectorAll("button")).find((button) => isSubmit(button, true));
-      if (match) return match;
+    for (let depth = 0; node && depth < 8; depth += 1, node = node.parentElement) {
+      addCandidates(node, depth);
     }
-    return Array.from(document.querySelectorAll("button")).find((button) => isSubmit(button, false)) || null;
+    addCandidates(document.body, 12);
+
+    return Array.from(candidates.entries())
+      .sort((left, right) => right[1] - left[1])[0]?.[0] || null;
   }
 
   function assetIdFromDetailUrl(value) {
@@ -820,10 +857,11 @@
   }
 
   function submitControlIsEnabled(control) {
-    return control instanceof HTMLButtonElement
+    return control instanceof HTMLElement
       && document.contains(control)
       && visible(control)
-      && !control.disabled
+      && !(control instanceof HTMLButtonElement && control.disabled)
+      && !control.hasAttribute("disabled")
       && control.getAttribute("aria-disabled") !== "true";
   }
 
@@ -839,10 +877,12 @@
       ? `${hit.tagName.toLowerCase()}${hit.getAttribute("aria-label") ? `:${hit.getAttribute("aria-label")}` : ""}`
       : "없음";
     const enabled = submitControlIsEnabled(control) ? "활성" : "비활성";
-    return `${action} · ${enabled} · ${Math.round(rect.width)}×${Math.round(rect.height)} · 중심 대상 ${hitText}`;
+    const descriptor = accessibleDescriptor(control).replace(/\s+/g, " ").trim().slice(0, 100) || "라벨 없음";
+    const type = control.getAttribute("type") || control.getAttribute("role") || control.tagName.toLowerCase();
+    return `${action} · ${enabled} · ${type} · ${Math.round(rect.width)}×${Math.round(rect.height)} · 중심 대상 ${hitText} · ${descriptor}`;
   }
 
-  async function confirmGenerationStarted({ expectedPrompt, submitButton, baselineFailureCount = 0, onRetry }) {
+  async function confirmGenerationStarted({ input = null, expectedPrompt, baselineFailureCount = 0, onRetry }) {
     const startedAt = Date.now();
     let retrySubmitted = false;
 
@@ -852,13 +892,16 @@
       if (error) throw new Error(error);
 
       const progressCards = findGenerationProgressCards(expectedPrompt);
-      if (hasBusySignal(progressCards) || !submitControlIsEnabled(submitButton)) return true;
+      const liveInput = input instanceof HTMLElement && document.contains(input) ? input : findPromptInput();
+      const currentSubmitButton = findSubmitButton(liveInput);
+      if (hasBusySignal(progressCards) || (currentSubmitButton && !submitControlIsEnabled(currentSubmitButton))) return true;
 
       // Flow can ignore one trusted click while leaving its submit control
       // enabled. Verify that a request actually started, then retry exactly
       // once instead of waiting through the full generation timeout.
       if (!retrySubmitted && Date.now() - startedAt >= 8_000) {
-        const currentButton = findSubmitButton();
+        const currentInput = input instanceof HTMLElement && document.contains(input) ? input : findPromptInput();
+        const currentButton = findSubmitButton(currentInput);
         if (submitControlIsEnabled(currentButton)) {
           retrySubmitted = true;
           await onRetry?.(currentButton);
@@ -1589,9 +1632,9 @@
         progress: 18
       });
 
-      const submitButton = await waitFor(() => {
+      let submitButton = await waitFor(() => {
         const button = findSubmitButton(input);
-        return button && !button.disabled && button.getAttribute("aria-disabled") !== "true" ? button : null;
+        return submitControlIsEnabled(button) ? button : null;
       }, {
         timeoutMs: 15_000,
         error: "Flow 캐릭터 만들기 버튼이 활성화되지 않았습니다."
@@ -1604,6 +1647,8 @@
 
       const baselineMedia = captureLargeMedia();
       const baselineFailureCount = captureGenerationFailureCards().length;
+      const refreshedSubmitButton = findSubmitButton(input);
+      if (submitControlIsEnabled(refreshedSubmitButton)) submitButton = refreshedSubmitButton;
       await clickTrusted(submitButton);
       await emitReliable({
         type: "FLOW_CHARACTER_PROGRESS",
@@ -1614,8 +1659,8 @@
         submissionDiagnostic: submissionDiagnostic(submitButton, "좌표 클릭 전송")
       });
       await confirmGenerationStarted({
+        input,
         expectedPrompt: character.prompt,
-        submitButton,
         baselineFailureCount,
         onRetry: async (currentButton) => emitReliable({
           type: "FLOW_CHARACTER_PROGRESS",
@@ -1690,9 +1735,9 @@
         generationMode: "direct"
       });
 
-      const submitButton = await waitFor(() => {
+      let submitButton = await waitFor(() => {
         const button = findSubmitButton(input);
-        return button && !button.disabled && button.getAttribute("aria-disabled") !== "true" ? button : null;
+        return submitControlIsEnabled(button) ? button : null;
       }, {
         timeoutMs: 15_000,
         error: "Flow 만들기 버튼이 활성화되지 않았습니다."
@@ -1711,6 +1756,8 @@
       const baselineSignals = captureCompletionSignals();
       const baselineFailureCount = captureGenerationFailureCards().length;
       const requestSubmittedAt = Date.now();
+      const refreshedSubmitButton = findSubmitButton(input);
+      if (submitControlIsEnabled(refreshedSubmitButton)) submitButton = refreshedSubmitButton;
       await emitReliable({
         type: "FLOW_JOB_PROGRESS",
         jobId: job.id,
@@ -1736,8 +1783,8 @@
         submissionDiagnostic: submissionDiagnostic(submitButton, "좌표 클릭 전송")
       });
       await confirmGenerationStarted({
+        input,
         expectedPrompt: job.prompt,
-        submitButton,
         baselineFailureCount,
         onRetry: async (currentButton) => emitReliable({
           type: "FLOW_JOB_PROGRESS",

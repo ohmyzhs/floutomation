@@ -43,6 +43,10 @@ const promptReferenceStart = contentSource.indexOf("async function setPromptWith
 const promptReferenceEnd = contentSource.indexOf("function findSubmitButton", promptReferenceStart);
 const promptReferenceSource = contentSource.slice(promptReferenceStart, promptReferenceEnd);
 
+const submitStart = contentSource.indexOf("function submitButtonDescriptor");
+const submitEnd = contentSource.indexOf("function assetIdFromDetailUrl", submitStart);
+const submitSource = contentSource.slice(submitStart, submitEnd);
+
 const manualPromptStart = contentSource.indexOf("async function prepareManualScenePrompt");
 const manualPromptEnd = contentSource.indexOf("function currentProjectTitle", manualPromptStart);
 const manualPromptSource = contentSource.slice(manualPromptStart, manualPromptEnd);
@@ -106,13 +110,26 @@ test("scene monitoring stops promptly when the queue stop signal arrives", () =>
 });
 
 test("a submitted request must show a Flow start signal and retries once with trusted Enter", () => {
-  assert.match(submissionSource, /hasBusySignal\(progressCards\) \|\| !submitControlIsEnabled\(submitButton\)/);
+  assert.match(submissionSource, /hasBusySignal\(progressCards\) \|\| \(currentSubmitButton && !submitControlIsEnabled\(currentSubmitButton\)\)/);
   assert.match(submissionSource, /Date\.now\(\) - startedAt >= 8_000/);
   assert.match(submissionSource, /retrySubmitted = true/);
   assert.match(submissionSource, /submitWithTrustedEnter\(currentButton\)/);
   assert.match(contentSource, /type: "FLOW_TRUSTED_SUBMIT"/);
   assert.match(contentSource, /submissionDiagnostic\(submitButton, "좌표 클릭 전송"\)/);
   assert.match(contentSource, /submissionDiagnostic\(currentButton, "키보드 Enter 재시도"\)/);
+});
+
+test("submit control lookup prefers the character form submit button and keeps retry scope", () => {
+  assert.match(submitSource, /querySelectorAll\("button, \[role=/);
+  assert.match(submitSource, /closest\("form"\)/);
+  assert.match(submitSource, /associatedForm/);
+  assert.match(submitSource, /type === "submit"/);
+  assert.match(submitSource, /data-testid/);
+  assert.match(contentSource, /element\.focus\?\.\(\{ preventScroll: true \}\)/);
+  assert.match(contentSource, /const currentSubmitButton = findSubmitButton\(liveInput\)/);
+  assert.match(contentSource, /confirmGenerationStarted\(\{\s*input,/);
+  assert.match(contentSource, /const currentInput = input instanceof HTMLElement && document\.contains\(input\) \? input : findPromptInput\(\);/);
+  assert.match(contentSource, /const currentButton = findSubmitButton\(currentInput\)/);
 });
 
 test("hidden Flow pages can use structural controls without viewport geometry", () => {
