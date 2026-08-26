@@ -1506,7 +1506,11 @@ async function handleUiMessage(message) {
       if (state.activeJobId) throw new Error("진행 중인 이미지 작업이 끝난 뒤 새 큐를 적용해 주세요.");
       const previousState = { characters: state.characters, jobs: state.jobs };
       const isIntroQueue = message.queueMode === "intro";
-      const existingJobs = reuseExistingCharacters ? state.jobs.map((job) => ({ ...job })) : [];
+      const existingJobs = reuseExistingCharacters
+        ? state.jobs
+          .filter((job) => !isIntroQueue || ["intro", "thumbnail"].includes(String(job.sourceMode || "")))
+          .map((job) => ({ ...job }))
+        : [];
       const queuedPrompts = (Array.isArray(message.prompts) ? message.prompts : []).map((prompt, index) => ({
         ...prompt,
         number: Number(prompt.number || prompt.sourceNumber || index + 1),
@@ -1844,19 +1848,39 @@ async function handleUiMessage(message) {
       const diagnostics = await sendToTab(flowProject.tab.id, { type: "GET_FLOW_DIAGNOSTICS" });
       const profile = findProjectCharacterProfile(await readProjectHistory(), flowProject.projectId);
       let restoredMappingCount = 0;
+      let restoredCharacterCount = 0;
       await updateState((draft) => {
         draft.flowConnected = Boolean(diagnostics?.ready);
-        if ((!draft.flowProjectId && !draft.characters.length) || draft.flowProjectId === flowProject.projectId) {
-          draft.tabId = flowProject.tab.id;
-          draft.flowProjectId = flowProject.projectId;
-          draft.flowProjectTitle = flowProject.projectTitle;
-          if (!draft.jobs.length && !draft.characters.length && profile?.mappingJobs?.length) {
-            draft.jobs = createRestoredMappingJobs(profile);
-            draft.status = "completed";
-            draft.phase = "scenes";
-            draft.lastError = null;
-            restoredMappingCount = draft.jobs.length;
-          }
+        if (draft.activeJobId) return;
+        const hadNoProject = !draft.flowProjectId;
+        const projectChanged = Boolean(draft.flowProjectId && draft.flowProjectId !== flowProject.projectId);
+        const stateIsEmpty = !draft.jobs.length && !draft.characters.length;
+        draft.tabId = flowProject.tab.id;
+        draft.flowProjectId = flowProject.projectId;
+        draft.flowProjectTitle = flowProject.projectTitle;
+        const shouldRestore = stateIsEmpty || projectChanged || (hadNoProject && Boolean(profile));
+        if (!shouldRestore) return;
+
+        draft.assetCatalog = projectChanged ? [] : draft.assetCatalog;
+        if (profile) {
+          draft.characters = createCharacters(profile.characters, { alreadyRegistered: true });
+          draft.jobs = createRestoredMappingJobs(profile);
+          draft.queueMode = "scene";
+          draft.executionMode = "automatic";
+          draft.status = draft.jobs.length ? "completed" : "idle";
+          draft.phase = draft.jobs.length ? "scenes" : draft.characters.length ? "characters" : "idle";
+          draft.activeJobId = null;
+          draft.activeTaskType = null;
+          draft.nextRunAt = null;
+          draft.pauseRequested = false;
+          draft.manualPause = false;
+          draft.lastFlowRegisteredKeys = Array.isArray(profile.registeredKeys) ? profile.registeredKeys : [];
+          draft.lastFlowSyncAt = null;
+          draft.lastFlowSceneImageCount = null;
+          draft.lastFlowImageSyncAt = null;
+          draft.lastError = null;
+          restoredCharacterCount = draft.characters.length;
+          restoredMappingCount = draft.jobs.length;
         }
       });
       return {
@@ -1867,6 +1891,7 @@ async function handleUiMessage(message) {
           projectId: flowProject.projectId,
           projectTitle: flowProject.projectTitle,
           savedProfile: projectProfileSummary(profile),
+          restoredCharacterCount,
           restoredMappingCount,
           activeQueueProjectId: state.flowProjectId || ""
         }

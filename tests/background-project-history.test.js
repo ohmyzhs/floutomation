@@ -39,3 +39,21 @@ test("asset mappings are archived per project and restored onto matching scene s
   assert.match(source, /restoreProjectMappings\(jobs, savedProjectProfile\)/);
   assert.match(source, /createRestoredMappingJobs\(profile\)/);
 });
+
+test("checking a different Flow project adopts its saved profile instead of only showing a toast", () => {
+  const checkStart = source.indexOf('if (message.type === "CHECK_FLOW")');
+  const checkEnd = source.indexOf('throw new Error(`지원하지 않는 메시지입니다', checkStart);
+  const checkSource = source.slice(checkStart, checkEnd);
+  assert.match(checkSource, /projectChanged/);
+  assert.match(checkSource, /const shouldRestore = stateIsEmpty \|\| projectChanged/);
+  assert.match(checkSource, /draft\.characters = createCharacters\(profile\.characters, \{ alreadyRegistered: true \}\)/);
+  assert.match(checkSource, /restoredCharacterCount/);
+  assert.match(checkSource, /hadNoProject && Boolean\(profile\)/);
+});
+
+test("intro queues do not carry restored scene mapping cards into a new intro run", () => {
+  const setQueueStart = source.indexOf('if (message.type === "SET_QUEUE")');
+  const setQueueEnd = source.indexOf('if (message.type === "SYNC_FLOW_STATE")', setQueueStart);
+  const setQueueSource = source.slice(setQueueStart, setQueueEnd);
+  assert.match(setQueueSource, /!isIntroQueue \|\| \["intro", "thumbnail"\]\.includes/);
+});
