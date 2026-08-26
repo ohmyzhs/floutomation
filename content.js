@@ -647,6 +647,35 @@
       .sort((left, right) => right[1] - left[1])[0]?.[0] || null;
   }
 
+  function isCharacterSubmitButton(button) {
+    if (!(button instanceof HTMLButtonElement) || !visible(button)) return false;
+    const hasForwardIcon = Array.from(button.querySelectorAll("i.google-symbols, i"))
+      .some((icon) => String(icon.textContent || "").trim() === "arrow_forward");
+    const hasCreateLabel = Array.from(button.querySelectorAll("span"))
+      .some((label) => /^(?:만들기|create)$/i.test(String(label.textContent || "").trim()));
+    return hasForwardIcon && hasCreateLabel;
+  }
+
+  function findCharacterSubmitButton(input = findCharacterCreatorInput()) {
+    let node = input?.parentElement || null;
+    for (let depth = 0; node && depth < 8; depth += 1, node = node.parentElement) {
+      const button = Array.from(node.querySelectorAll("button")).find(isCharacterSubmitButton);
+      if (button) return button;
+    }
+    return Array.from(document.querySelectorAll("button")).find(isCharacterSubmitButton) || null;
+  }
+
+  async function clickCharacterSubmit(button) {
+    if (!submitControlIsEnabled(button)) {
+      throw new Error("Flow 캐릭터 만들기 버튼이 비활성 상태입니다.");
+    }
+    button.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+    button.focus({ preventScroll: true });
+    button.click();
+    await sleep(UI_SETTLE_MS);
+    return { ok: true, clicked: true, method: "button.click" };
+  }
+
   function assetIdFromDetailUrl(value) {
     try {
       const url = new URL(String(value || ""), location.href);
@@ -882,7 +911,15 @@
     return `${action} · ${enabled} · ${type} · ${Math.round(rect.width)}×${Math.round(rect.height)} · 중심 대상 ${hitText} · ${descriptor}`;
   }
 
-  async function confirmGenerationStarted({ input = null, expectedPrompt, baselineFailureCount = 0, onRetry }) {
+  async function confirmGenerationStarted({
+    input = null,
+    expectedPrompt,
+    baselineFailureCount = 0,
+    findSubmitControl = findSubmitButton,
+    retrySubmit = submitWithTrustedEnter,
+    failureMessage = "Flow가 생성 요청을 시작하지 않았습니다. 프롬프트 길이와 무관하게 버튼이 활성 상태로 남았습니다. 좌표 클릭 후 키보드 전송까지 한 번 재시도했지만 생성 신호를 확인하지 못해 작업을 중단했습니다.",
+    onRetry
+  }) {
     const startedAt = Date.now();
     let retrySubmitted = false;
 
@@ -893,7 +930,7 @@
 
       const progressCards = findGenerationProgressCards(expectedPrompt);
       const liveInput = input instanceof HTMLElement && document.contains(input) ? input : findPromptInput();
-      const currentSubmitButton = findSubmitButton(liveInput);
+      const currentSubmitButton = findSubmitControl(liveInput);
       if (hasBusySignal(progressCards) || (currentSubmitButton && !submitControlIsEnabled(currentSubmitButton))) return true;
 
       // Flow can ignore one trusted click while leaving its submit control
@@ -901,18 +938,18 @@
       // once instead of waiting through the full generation timeout.
       if (!retrySubmitted && Date.now() - startedAt >= 8_000) {
         const currentInput = input instanceof HTMLElement && document.contains(input) ? input : findPromptInput();
-        const currentButton = findSubmitButton(currentInput);
+        const currentButton = findSubmitControl(currentInput);
         if (submitControlIsEnabled(currentButton)) {
           retrySubmitted = true;
           await onRetry?.(currentButton);
-          await submitWithTrustedEnter(currentButton);
+          await retrySubmit(currentButton);
           continue;
         }
       }
       await sleep(400);
     }
 
-    throw new Error("Flow가 생성 요청을 시작하지 않았습니다. 프롬프트 길이와 무관하게 버튼이 활성 상태로 남았습니다. 좌표 클릭 후 키보드 전송까지 한 번 재시도했지만 생성 신호를 확인하지 못해 작업을 중단했습니다.");
+    throw new Error(failureMessage);
   }
 
   async function monitorGeneration({ jobId, expectedImages, expectedPrompt, timeoutMs, baselineMedia, baselineSignals, baselineFailureCount = 0 }) {
@@ -1068,7 +1105,7 @@
     const input = findCharacterCreatorInput();
     if (!input) return null;
     const modelButton = findCharacterModelButton();
-    const submitButton = findSubmitButton(input);
+    const submitButton = findCharacterSubmitButton(input);
     return modelButton && submitButton ? { input, modelButton, submitButton } : null;
   }
 
@@ -1633,7 +1670,7 @@
       });
 
       let submitButton = await waitFor(() => {
-        const button = findSubmitButton(input);
+        const button = findCharacterSubmitButton(input);
         return submitControlIsEnabled(button) ? button : null;
       }, {
         timeoutMs: 15_000,
@@ -1647,28 +1684,31 @@
 
       const baselineMedia = captureLargeMedia();
       const baselineFailureCount = captureGenerationFailureCards().length;
-      const refreshedSubmitButton = findSubmitButton(input);
+      const refreshedSubmitButton = findCharacterSubmitButton(input);
       if (submitControlIsEnabled(refreshedSubmitButton)) submitButton = refreshedSubmitButton;
-      await clickTrusted(submitButton);
+      await clickCharacterSubmit(submitButton);
       await emitReliable({
         type: "FLOW_CHARACTER_PROGRESS",
         characterId: character.id,
         phase: "generating",
         stage: "캐릭터 생성 요청 접수 확인 중",
         progress: 24,
-        submissionDiagnostic: submissionDiagnostic(submitButton, "좌표 클릭 전송")
+        submissionDiagnostic: submissionDiagnostic(submitButton, "button.click 직접 전송")
       });
       await confirmGenerationStarted({
         input,
         expectedPrompt: character.prompt,
         baselineFailureCount,
+        findSubmitControl: findCharacterSubmitButton,
+        retrySubmit: clickTrusted,
+        failureMessage: "Flow 캐릭터 만들기 버튼을 찾았지만 생성 요청이 시작되지 않았습니다. button.click 직접 실행 후 같은 버튼에 실제 좌표 클릭까지 재시도했으나 생성 신호를 확인하지 못했습니다.",
         onRetry: async (currentButton) => emitReliable({
           type: "FLOW_CHARACTER_PROGRESS",
           characterId: character.id,
           phase: "generating",
-          stage: "생성 시작 신호 없음 · 키보드 전송 1회 재시도",
+          stage: "생성 시작 신호 없음 · 같은 만들기 버튼 실제 좌표 클릭 재시도",
           progress: 24,
-          submissionDiagnostic: submissionDiagnostic(currentButton, "키보드 Enter 재시도")
+          submissionDiagnostic: submissionDiagnostic(currentButton, "만들기 버튼 좌표 클릭 재시도")
         })
       });
 

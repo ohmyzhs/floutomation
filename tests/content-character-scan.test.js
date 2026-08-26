@@ -113,7 +113,8 @@ test("a submitted request must show a Flow start signal and retries once with tr
   assert.match(submissionSource, /hasBusySignal\(progressCards\) \|\| \(currentSubmitButton && !submitControlIsEnabled\(currentSubmitButton\)\)/);
   assert.match(submissionSource, /Date\.now\(\) - startedAt >= 8_000/);
   assert.match(submissionSource, /retrySubmitted = true/);
-  assert.match(submissionSource, /submitWithTrustedEnter\(currentButton\)/);
+  assert.match(submissionSource, /retrySubmit = submitWithTrustedEnter/);
+  assert.match(submissionSource, /await retrySubmit\(currentButton\)/);
   assert.match(contentSource, /type: "FLOW_TRUSTED_SUBMIT"/);
   assert.match(contentSource, /submissionDiagnostic\(submitButton, "좌표 클릭 전송"\)/);
   assert.match(contentSource, /submissionDiagnostic\(currentButton, "키보드 Enter 재시도"\)/);
@@ -126,10 +127,22 @@ test("submit control lookup prefers the character form submit button and keeps r
   assert.match(submitSource, /type === "submit"/);
   assert.match(submitSource, /data-testid/);
   assert.match(contentSource, /element\.focus\?\.\(\{ preventScroll: true \}\)/);
-  assert.match(contentSource, /const currentSubmitButton = findSubmitButton\(liveInput\)/);
+  assert.match(contentSource, /const currentSubmitButton = findSubmitControl\(liveInput\)/);
   assert.match(contentSource, /confirmGenerationStarted\(\{\s*input,/);
   assert.match(contentSource, /const currentInput = input instanceof HTMLElement && document\.contains\(input\) \? input : findPromptInput\(\);/);
-  assert.match(contentSource, /const currentButton = findSubmitButton\(currentInput\)/);
+  assert.match(contentSource, /const currentButton = findSubmitControl\(currentInput\)/);
+});
+
+test("character generation clicks the exact arrow_forward 만들기 button directly", () => {
+  assert.match(submitSource, /function isCharacterSubmitButton/);
+  assert.match(submitSource, /textContent \|\| ""\)\.trim\(\) === "arrow_forward"/);
+  assert.match(submitSource, /\^\(\?:만들기\|create\)\$/);
+  assert.match(submitSource, /function findCharacterSubmitButton/);
+  assert.match(submitSource, /button\.click\(\)/);
+  assert.match(contentSource, /const button = findCharacterSubmitButton\(input\)/);
+  assert.match(contentSource, /await clickCharacterSubmit\(submitButton\)/);
+  assert.match(contentSource, /findSubmitControl: findCharacterSubmitButton/);
+  assert.match(contentSource, /retrySubmit: clickTrusted/);
 });
 
 test("hidden Flow pages can use structural controls without viewport geometry", () => {
