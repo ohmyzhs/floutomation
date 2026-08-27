@@ -28,6 +28,7 @@ import {
   markSceneFailedAndContinue,
   retryFailedTasks,
   rollbackUnverifiedCompletedScenes,
+  sceneSupplementPlan,
   setCharacterReady,
   setJobReady,
   summarizeState
@@ -49,6 +50,40 @@ test("Flow image settings accept supported ratio and image count values", () => 
   assert.equal(options.imagesPerPrompt, 4);
   assert.equal(normalizeOptions({ aspectRatio: "invalid", imagesPerPrompt: 9 }).aspectRatio, "16:9");
   assert.equal(normalizeOptions({ aspectRatio: "invalid", imagesPerPrompt: 9 }).imagesPerPrompt, 4);
+});
+
+test("a one-image completed scene can be filled to exactly three images", () => {
+  const [job] = createJobs([{ title: "scene 1", prompt: "same scene", sourceMode: "scene" }]);
+  job.status = "completed";
+  job.resultAssets = [{ assetId: "asset-1", url: "https://example.test/1" }];
+
+  assert.deepEqual(sceneSupplementPlan(job), {
+    currentImages: 1,
+    targetTotal: 3,
+    requestedImages: 2
+  });
+
+  job.supplementTargetTotal = 3;
+  job.resultAssets.push({ assetId: "asset-2", url: "https://example.test/2" });
+  assert.equal(sceneSupplementPlan(job).requestedImages, 1);
+
+  job.resultAssets.push({ assetId: "asset-3", url: "https://example.test/3" });
+  assert.equal(sceneSupplementPlan(job), null);
+});
+
+test("ordinary two-image and intro jobs do not expose scene filling", () => {
+  const [scene] = createJobs([{ title: "scene", prompt: "scene", sourceMode: "scene" }]);
+  scene.status = "completed";
+  scene.resultAssets = [
+    { assetId: "asset-1", url: "https://example.test/1" },
+    { assetId: "asset-2", url: "https://example.test/2" }
+  ];
+  assert.equal(sceneSupplementPlan(scene), null);
+
+  const [intro] = createJobs([{ title: "intro", prompt: "intro", sourceMode: "intro" }]);
+  intro.status = "completed";
+  intro.resultAssets = [{ assetId: "intro-1", url: "https://example.test/intro" }];
+  assert.equal(sceneSupplementPlan(intro), null);
 });
 
 test("delay settings stay within the UI range and random mode uses 60 to 90 seconds", () => {

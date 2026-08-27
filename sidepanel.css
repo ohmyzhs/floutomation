@@ -384,6 +384,8 @@ textarea::placeholder { color: #aaa5b0; }
 .job-asset-remove:hover { background: #a9323d; transform: scale(1.08); }
 .job-action-button { min-height: 28px; padding: 5px 7px; border: 0; border-radius: 7px; color: var(--purple-dark); background: var(--purple-soft); font-size: 8px; font-weight: 800; white-space: nowrap; }
 .job-action-button:hover { background: #e2dcff; }
+.job-action-button.job-fill-button { color: #177252; background: var(--green-soft); }
+.job-action-button.job-fill-button:hover { color: #fff; background: var(--green); }
 .job-action-button.job-manual-button { color: #684e19; background: var(--amber-soft); }
 .job-action-button.job-manual-button:hover { background: #ffedc2; }
 .job-state-controls { min-width: 0; margin-left: auto; }

@@ -20,6 +20,7 @@ import {
   prepareSceneNavigationRecovery,
   rollbackUnverifiedCompletedScenes,
   retryFailedTasks,
+  sceneSupplementPlan,
   setCharacterReady,
   setJobReady
 } from "./lib/queue-state.js";
@@ -510,6 +511,12 @@ function decorateTaskAssets(task, assets) {
 }
 
 async function pauseWithError(message, taskId = null, taskType = null) {
+  const snapshot = await readState();
+  const activeId = taskId || snapshot.activeJobId;
+  const activeType = taskType || snapshot.activeTaskType || "scene";
+  if (activeType === "scene" && findTask(snapshot, activeId, activeType)?.supplementing) {
+    return finishSceneSupplementFailure(activeId, message);
+  }
   await chrome.alarms.clear(QUEUE_ALARM);
   return updateState((state) => {
     const activeId = taskId || state.activeJobId;
@@ -537,6 +544,9 @@ async function pauseWithError(message, taskId = null, taskType = null) {
 }
 
 async function scheduleSceneAutomaticRetry(message, jobId = null) {
+  const snapshot = await readState();
+  const supplementJob = snapshot.jobs.find((entry) => entry.id === (jobId || snapshot.activeJobId));
+  if (supplementJob?.supplementing) return finishSceneSupplementFailure(supplementJob.id, message);
   if (isBlockingFlowError(message)) return pauseWithError(message, jobId, "scene");
 
   await chrome.alarms.clear(QUEUE_ALARM);
@@ -703,6 +713,10 @@ async function completeTask(taskId, taskType, imagesGenerated, assets = []) {
     const task = findTask(snapshot, taskId, taskType);
     const incomingAssets = decorateTaskAssets(task, assets);
     const verifiedAssets = uniqueAssets([...(task?.resultAssets || []), ...incomingAssets]);
+    const supplementBaseCount = Math.max(0, Number(task?.supplementBaseAssetCount || 0));
+    if (task?.supplementing && verifiedAssets.length <= supplementBaseCount) {
+      return finishSceneSupplementFailure(taskId, "Flow 생성이 끝났지만 새로 추가된 결과 이미지를 확인하지 못했습니다.");
+    }
     if (!verifiedAssets.length) {
       return scheduleSceneAutomaticRetry(
         "Flow 완료 신호를 받았지만 다운로드 가능한 결과 이미지를 확인하지 못했습니다.",
@@ -715,6 +729,7 @@ async function completeTask(taskId, taskType, imagesGenerated, assets = []) {
     if (draft.activeJobId !== taskId || draft.activeTaskType !== taskType) return;
     const task = findTask(draft, taskId, taskType);
     if (!task) return;
+    const supplementing = taskType === "scene" && Boolean(task.supplementing);
 
     task.status = "completed";
     task.stage = taskType === "character" ? `@${task.key} 등록 완료` : "완료";
@@ -727,10 +742,23 @@ async function completeTask(taskId, taskType, imagesGenerated, assets = []) {
     else {
       // Preserve variable-size results up to Flow's four-image UI limit.
       const allResultAssets = uniqueAssets([...(task.resultAssets || []), ...decorateTaskAssets(task, assets)]);
-      const requestedImages = Math.max(1, Number(draft.options.imagesPerPrompt || 2));
+      const requestedImages = supplementing
+        ? Math.max(1, Number(task.supplementRequestedImages || 1))
+        : Math.max(1, Number(draft.options.imagesPerPrompt || 2));
       const actualImages = allResultAssets.length || Math.max(0, Number(imagesGenerated || 0));
       task.imagesGenerated = actualImages;
-      task.stage = actualImages < requestedImages ? `완료 · ${actualImages}/${requestedImages}장 생성` : "완료";
+      if (supplementing) {
+        const baseCount = Math.max(0, Number(task.supplementBaseAssetCount || 0));
+        const addedImages = Math.max(0, actualImages - baseCount);
+        const targetTotal = Math.max(3, Number(task.supplementTargetTotal || 3));
+        task.stage = addedImages < requestedImages
+          ? `완료 · 보충 ${addedImages}/${requestedImages}장 추가 · 총 ${actualImages}장`
+          : `완료 · ${addedImages}장 보충 · 총 ${actualImages}장`;
+        if (actualImages >= targetTotal) task.supplementTargetTotal = null;
+        clearSceneSupplementRun(task);
+      } else {
+        task.stage = actualImages < requestedImages ? `완료 · ${actualImages}/${requestedImages}장 생성` : "완료";
+      }
       task.resultAssetOverflowCount = Math.max(0, allResultAssets.length - MAX_TRACKED_RESULT_ASSETS);
       task.resultAssets = allResultAssets.slice(0, MAX_TRACKED_RESULT_ASSETS);
       task.generationPercentages = [];
@@ -749,7 +777,13 @@ async function completeTask(taskId, taskType, imagesGenerated, assets = []) {
     draft.activeTaskType = null;
     draft.lastError = null;
 
-    if (!hasPendingTasks(draft)) {
+    if (supplementing) {
+      draft.pauseRequested = false;
+      draft.status = hasPendingTasks(draft) ? "paused" : "completed";
+      draft.phase = draft.status === "completed" ? "completed" : "scenes";
+      draft.manualPause = draft.status === "paused";
+      draft.nextRunAt = null;
+    } else if (!hasPendingTasks(draft)) {
       draft.pauseRequested = false;
       draft.status = "completed";
       draft.phase = "completed";
@@ -800,6 +834,122 @@ function sceneMessagePayload(job) {
   };
 }
 
+function sceneGenerationOptions(state, job) {
+  const requestedImages = job?.supplementing
+    ? Math.max(1, Number(job.supplementRequestedImages || 1))
+    : Math.max(1, Number(state.options.imagesPerPrompt || 2));
+  return { ...state.options, imagesPerPrompt: requestedImages };
+}
+
+function clearSceneSupplementRun(job) {
+  job.supplementing = false;
+  job.supplementBaseAssetCount = null;
+  job.supplementRequestedImages = null;
+  job.generationPercentages = [];
+  job.baselineMedia = [];
+  job.baselineCapturedAt = null;
+  job.baselineFailureCount = null;
+  job.requestSubmittedAt = null;
+  job.recoveryAttempts = 0;
+  job.lastRecoveryAt = null;
+  job.autoRetryCount = 0;
+  job.lastRetryAt = null;
+  job.lastTransientError = null;
+}
+
+async function finishSceneSupplementFailure(jobId, message) {
+  await chrome.alarms.clear(QUEUE_ALARM);
+  const state = await updateState((draft) => {
+    const job = draft.jobs.find((entry) => entry.id === jobId);
+    if (!job?.supplementing) return;
+    const existingCount = uniqueAssets(job.resultAssets || []).length;
+    job.status = "completed";
+    job.stage = `완료 · 보충 실패 · 기존 ${existingCount}장 유지`;
+    job.progress = 100;
+    job.imagesGenerated = existingCount;
+    job.error = String(message || "추가 이미지 생성에 실패했습니다.");
+    clearSceneSupplementRun(job);
+    draft.activeJobId = null;
+    draft.activeTaskType = null;
+    draft.pauseRequested = false;
+    draft.nextRunAt = null;
+    draft.status = hasPendingTasks(draft) ? "paused" : "completed";
+    draft.phase = draft.status === "completed" ? "completed" : "scenes";
+    draft.manualPause = draft.status === "paused";
+    draft.lastError = job.error;
+  });
+  await archiveProjectMappings(state);
+  return state;
+}
+
+async function startSceneSupplement(jobId) {
+  const current = await readState();
+  if (current.activeJobId || ["running", "waiting", "pausing"].includes(current.status)) {
+    throw new Error("현재 작업이 끝나거나 대기열을 중단한 뒤 이미지를 보충해 주세요.");
+  }
+  if (current.characters.some((character) => character.status !== "completed")) {
+    throw new Error("모든 캐릭터가 Flow에 준비된 뒤 이미지를 보충할 수 있습니다.");
+  }
+  const currentJob = current.jobs.find((entry) => entry.id === jobId);
+  const plan = sceneSupplementPlan(currentJob);
+  if (!plan) throw new Error("1장만 생성된 완료 장면 또는 보충 중인 장면만 추가 생성할 수 있습니다.");
+  const tab = await findFlowTab(current.tabId);
+  if (!tab?.id) throw new Error("추가 이미지를 생성할 Google Flow 프로젝트 탭이 없습니다.");
+
+  await chrome.alarms.clear(QUEUE_ALARM);
+  const preparedState = await updateState((draft) => {
+    if (draft.activeJobId || ["running", "waiting", "pausing"].includes(draft.status)) {
+      throw new Error("다른 작업이 먼저 시작되어 추가 생성을 실행할 수 없습니다.");
+    }
+    const job = draft.jobs.find((entry) => entry.id === jobId);
+    const freshPlan = sceneSupplementPlan(job);
+    if (!freshPlan) throw new Error("보충할 장면의 이미지 상태가 변경되었습니다.");
+    job.supplementing = true;
+    job.supplementTargetTotal = freshPlan.targetTotal;
+    job.supplementBaseAssetCount = freshPlan.currentImages;
+    job.supplementRequestedImages = freshPlan.requestedImages;
+    job.status = "configuring";
+    job.stage = `추가 이미지 ${freshPlan.requestedImages}장 생성 준비 중 · 목표 ${freshPlan.targetTotal}장`;
+    job.progress = 5;
+    job.startedAt = Date.now();
+    job.completedAt = null;
+    job.error = null;
+    job.generationPercentages = [];
+    job.baselineMedia = [];
+    job.baselineCapturedAt = null;
+    job.baselineFailureCount = null;
+    job.requestSubmittedAt = null;
+    job.recoveryAttempts = 0;
+    job.lastRecoveryAt = null;
+    draft.activeJobId = job.id;
+    draft.activeTaskType = "scene";
+    draft.status = "running";
+    draft.phase = "scenes";
+    draft.manualPause = false;
+    draft.pauseRequested = false;
+    draft.nextRunAt = null;
+    draft.lastFlowSceneImageCount = null;
+    draft.lastFlowImageSyncAt = null;
+    draft.lastError = null;
+    draft.tabId = tab.id;
+    draft.flowConnected = true;
+  });
+
+  const job = preparedState.jobs.find((entry) => entry.id === jobId);
+  try {
+    const response = await sendToTab(tab.id, {
+      type: "RUN_FLOW_JOB",
+      job: sceneMessagePayload(job),
+      options: sceneGenerationOptions(preparedState, job)
+    });
+    if (!response?.accepted) throw new Error(response?.error || "Flow에서 추가 이미지 생성을 시작하지 못했습니다.");
+    return preparedState;
+  } catch (error) {
+    await finishSceneSupplementFailure(jobId, String(error?.message || error));
+    throw error;
+  }
+}
+
 async function reconcileActiveCharacter(tabId, state) {
   if (state.activeTaskType !== "character" || !state.activeJobId) return;
   const character = state.characters.find((entry) => entry.id === state.activeJobId);
@@ -828,7 +978,7 @@ async function reconcileActiveScene(tabId, state, deliveryAttempt = 0) {
     const response = await sendToTab(tabId, {
       type: "RECONCILE_FLOW_JOB",
       job: sceneMessagePayload(job),
-      options: state.options
+      options: sceneGenerationOptions(state, job)
     });
     if (!response?.accepted) throw new Error(response?.error || "일반 이미지 생성 상태 복구를 시작하지 못했습니다.");
   } catch (error) {
@@ -1102,11 +1252,14 @@ async function handleFlowEvent(message, sender) {
       job.progress = Math.max(job.progress, Math.min(96, Number(message.progress || 0)));
       job.detectedImages = Math.max(Number(job.detectedImages || 0), Number(message.detectedImages || 0));
       if (Array.isArray(message.generationPercentages)) {
+        const expectedImageCount = job.supplementing
+          ? Math.max(1, Number(job.supplementRequestedImages || 1))
+          : Math.max(1, Number(state.options.imagesPerPrompt || 2));
         job.generationPercentages = message.generationPercentages
           .map(Number)
           .filter(Number.isFinite)
           .map((value) => Math.max(0, Math.min(100, value)))
-          .slice(0, state.options.imagesPerPrompt);
+          .slice(0, expectedImageCount);
       }
       if (Array.isArray(message.baselineMedia)) {
         job.baselineMedia = message.baselineMedia.map(String);
@@ -1179,9 +1332,18 @@ async function handleFlowEvent(message, sender) {
       if (state.activeJobId !== message.jobId || state.activeTaskType !== "scene") return;
       const job = state.jobs.find((entry) => entry.id === message.jobId);
       if (job) {
-        job.status = "pending";
-        job.stage = "사용자 중단";
-        job.progress = 0;
+        if (job.supplementing) {
+          const existingCount = uniqueAssets(job.resultAssets || []).length;
+          job.status = "completed";
+          job.stage = `완료 · 보충 중단 · 기존 ${existingCount}장 유지`;
+          job.progress = 100;
+          job.imagesGenerated = existingCount;
+          clearSceneSupplementRun(job);
+        } else {
+          job.status = "pending";
+          job.stage = "사용자 중단";
+          job.progress = 0;
+        }
       }
       state.activeJobId = null;
       state.activeTaskType = null;
@@ -1198,6 +1360,13 @@ async function handleFlowEvent(message, sender) {
     // of a requested batch. Those verified assets are a usable success, not a
     // reason to submit the same prompt again and accidentally attach newer
     // cards from a later request.
+    if (job?.supplementing) {
+      const baseCount = Math.max(0, Number(job.supplementBaseAssetCount || 0));
+      if (uniqueAssets(job.resultAssets || []).length > baseCount) {
+        return completeTask(message.jobId, "scene", job.resultAssets.length, []);
+      }
+      return finishSceneSupplementFailure(message.jobId, String(message.error || "추가 이미지 생성에 실패했습니다."));
+    }
     if (job?.resultAssets?.length) {
       return completeTask(message.jobId, "scene", job.resultAssets.length, []);
     }
@@ -1488,6 +1657,7 @@ async function handleUiMessage(message) {
   if (message.type === "MAP_ASSET_TO_JOB") return mapAssetToJob(message.assetId, message.jobId);
   if (message.type === "UNMAP_ASSET_FROM_JOB") return unmapAssetFromJob(message.assetId, message.jobId);
   if (message.type === "REASSIGN_ASSETS_FROM_POSITION") return reassignAssetsFromPosition(message.startAssetKey, message.startJobId);
+  if (message.type === "FILL_SCENE_WITH_MORE_IMAGES") return startSceneSupplement(String(message.jobId || ""));
 
   if (message.type === "SET_QUEUE") {
     await chrome.alarms.clear(QUEUE_ALARM);
@@ -1727,7 +1897,17 @@ async function handleUiMessage(message) {
         if (interruptedTaskType === "character") {
           setCharacterReady(draft, interruptedTaskId, false, "대기열 중단 · 다시 생성 대기");
         } else {
-          setJobReady(draft, interruptedTaskId, false, "대기열 중단 · 다시 생성 대기");
+          const interruptedJob = draft.jobs.find((job) => job.id === interruptedTaskId);
+          if (interruptedJob?.supplementing) {
+            const existingCount = uniqueAssets(interruptedJob.resultAssets || []).length;
+            interruptedJob.status = "completed";
+            interruptedJob.stage = `완료 · 보충 중단 · 기존 ${existingCount}장 유지`;
+            interruptedJob.progress = 100;
+            interruptedJob.imagesGenerated = existingCount;
+            clearSceneSupplementRun(interruptedJob);
+          } else {
+            setJobReady(draft, interruptedTaskId, false, "대기열 중단 · 다시 생성 대기");
+          }
         }
         draft.activeJobId = null;
         draft.activeTaskType = null;

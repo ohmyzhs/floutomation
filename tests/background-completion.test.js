@@ -18,6 +18,16 @@ test("background accepts a partial scene result and retries only when no image w
   assert.match(completionSource, /완료 · \$\{actualImages\}\/\$\{requestedImages\}장 생성/);
 });
 
+test("scene filling preserves the first image and appends only new Flow assets", () => {
+  assert.match(backgroundSource, /FILL_SCENE_WITH_MORE_IMAGES/);
+  assert.match(backgroundSource, /sceneSupplementPlan/);
+  assert.match(backgroundSource, /supplementBaseAssetCount/);
+  assert.match(backgroundSource, /supplementRequestedImages/);
+  assert.match(completionSource, /const allResultAssets = uniqueAssets\(\[\.\.\.\(task\.resultAssets \|\| \[\]\), \.\.\.decorateTaskAssets\(task, assets\)\]\)/);
+  assert.match(completionSource, /완료 · \$\{addedImages\}장 보충 · 총 \$\{actualImages\}장/);
+  assert.match(backgroundSource, /보충 실패 · 기존 \$\{existingCount\}장 유지/);
+});
+
 test("manual scene mode pauses the queue and requires a separate user completion", () => {
   assert.match(manualSceneSource, /PREPARE_MANUAL_SCENE_PROMPT/);
   assert.match(manualSceneSource, /target\.status = "manual"/);

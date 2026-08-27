@@ -59,6 +59,14 @@ test("job cards expose every tracked result as a numbered thumbnail button", () 
   assert.match(source, /OPEN_IMAGE/);
 });
 
+test("one-image completed scene cards expose a fill action", () => {
+  assert.match(source, /sceneSupplementPlan/);
+  assert.match(source, /data-fill-scene/);
+  assert.match(source, /한장더 만들어 채우기/);
+  assert.match(source, /FILL_SCENE_WITH_MORE_IMAGES/);
+  assert.match(source, /새 결과는 기존 이미지 뒤에 자동 연결됩니다/);
+});
+
 test("job card thumbnails can be dragged to another scene card", () => {
   assert.match(source, /data-drag-asset/);
   assert.match(source, /data-drop-job/);

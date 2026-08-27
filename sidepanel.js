@@ -1,5 +1,5 @@
 import { analyzeIntroAssets, analyzePrompts } from "./lib/prompt-parser.js";
-import { MAX_DELAY_MS, MIN_DELAY_MS, createInitialState, hydrateState, summarizeState } from "./lib/queue-state.js";
+import { MAX_DELAY_MS, MIN_DELAY_MS, createInitialState, hydrateState, sceneSupplementPlan, summarizeState } from "./lib/queue-state.js";
 
 const elements = Object.fromEntries(
   [
@@ -205,6 +205,11 @@ function renderJobs() {
 
   elements.jobList.innerHTML = state.jobs.map((job, index) => {
     const resultAssets = displayAssetsForJob(job);
+    const supplementPlan = sceneSupplementPlan(job);
+    const canSupplement = Boolean(supplementPlan)
+      && resultAssets.length === supplementPlan.currentImages
+      && !state.activeJobId
+      && !["running", "waiting", "pausing"].includes(state.status);
     const assetButtons = resultAssets.map((asset, assetIndex) => {
       const targetAttribute = asset.detailUrl ? "data-open-asset" : "data-open-image";
       const target = asset.detailUrl || asset.url;
@@ -234,6 +239,7 @@ function renderJobs() {
           <div class="job-action-group job-work-actions" aria-label="작업 기능">
             <button class="job-action-button" data-copy-prompt="${escapeHtml(job.id)}" type="button" aria-label="${index + 1}번 프롬프트 복사">복사</button>
             ${resultAssets.length ? `<div class="job-assets" aria-label="${index + 1}번 장면 결과 이미지">${assetButtons}</div>` : ""}
+            ${canSupplement ? `<button class="job-action-button job-fill-button" data-fill-scene="${escapeHtml(job.id)}" type="button" title="같은 프롬프트를 다시 보내 목표 3장까지 새 결과를 추가 연결합니다">한장더 만들어 채우기</button>` : ""}
             ${canUseManual ? `<button class="job-action-button job-manual-button" data-prepare-manual-job="${escapeHtml(job.id)}" type="button">수동 프롬프트 보내기</button>` : ""}
           </div>
           <div class="job-action-group job-state-controls" aria-label="상태 제어">
@@ -832,6 +838,13 @@ elements.jobList.addEventListener("click", withUiError(async (event) => {
   const copyButton = event.target.closest("[data-copy-prompt]");
   if (copyButton) {
     await copyPrompt(copyButton.dataset.copyPrompt);
+    return;
+  }
+  const fillButton = event.target.closest("[data-fill-scene]");
+  if (fillButton) {
+    state = await send("FILL_SCENE_WITH_MORE_IMAGES", { jobId: fillButton.dataset.fillScene });
+    renderState();
+    showToast("같은 프롬프트로 추가 이미지를 생성합니다. 새 결과는 기존 이미지 뒤에 자동 연결됩니다.");
     return;
   }
   const assetButton = event.target.closest("[data-open-asset]");
