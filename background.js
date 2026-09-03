@@ -34,6 +34,8 @@ import {
   PROJECT_HISTORY_KEY,
   buildProjectCharacterProfile,
   findProjectCharacterProfile,
+  FLOW_TAB_URL_PATTERNS,
+  isFlowUrl,
   normalizeProjectHistory,
   projectIdFromFlowUrl,
   projectTitleFromTabTitle,
@@ -83,15 +85,10 @@ function updateState(mutator) {
   return operation;
 }
 
-function isFlowUrl(url) {
-  return /^https:\/\/labs\.google\/fx\/(?:[^/]+\/)?tools\/flow(?:\/|$)/i.test(String(url || ""));
-}
-
 function isFlowAssetUrl(url) {
   try {
     const parsed = new URL(String(url || ""));
-    return parsed.origin === "https://labs.google"
-      && isFlowUrl(parsed.href)
+    return isFlowUrl(parsed.href)
       && /\/project\/[^/?#]+\/edit\/[^/?#]+$/i.test(parsed.pathname);
   } catch {
     return false;
@@ -289,7 +286,7 @@ async function findFlowTab(preferredTabId) {
   const activeFlow = activeTabs.find((tab) => isFlowUrl(tab.url));
   if (activeFlow) return activeFlow;
 
-  const flowTabs = await chrome.tabs.query({ url: "https://labs.google/fx/*" });
+  const flowTabs = await chrome.tabs.query({ url: FLOW_TAB_URL_PATTERNS });
   return flowTabs
     .filter((tab) => isFlowUrl(tab.url))
     .sort((a, b) => Number(b.lastAccessed || 0) - Number(a.lastAccessed || 0))[0] || null;

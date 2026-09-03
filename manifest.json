@@ -17,6 +17,8 @@
   ],
   "host_permissions": [
     "https://labs.google/*",
+    "https://flow.google/*",
+    "https://fow.google/*",
     "https://flow-content.google/*",
     "https://*.google.com/*",
     "https://*.googleusercontent.com/*",
@@ -35,11 +37,15 @@
   "content_scripts": [
     {
       "matches": [
-        "https://labs.google/fx/*"
+        "https://labs.google/fx/*",
+        "https://flow.google/project/*",
+        "https://fow.google/project/*"
       ],
       "include_globs": [
         "https://labs.google/fx/tools/flow/*",
-        "https://labs.google/fx/*/tools/flow/*"
+        "https://labs.google/fx/*/tools/flow/*",
+        "https://flow.google/project/*",
+        "https://fow.google/project/*"
       ],
       "js": [
         "content.js"

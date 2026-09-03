@@ -4,16 +4,33 @@ import test from "node:test";
 import {
   buildProjectCharacterProfile,
   findProjectCharacterProfile,
+  isFlowUrl,
   projectIdFromFlowUrl,
   upsertProjectCharacterProfile
 } from "../lib/project-history.js";
 
-test("a Flow project ID is extracted from Korean and default project URLs", () => {
+test("Flow project IDs are extracted from legacy and direct project URLs", () => {
   assert.equal(
     projectIdFromFlowUrl("https://labs.google/fx/ko/tools/flow/project/c4f8aa7e-0ed5-4893-9d42-141ddc250f78"),
     "c4f8aa7e-0ed5-4893-9d42-141ddc250f78"
   );
+  assert.equal(
+    projectIdFromFlowUrl("https://flow.google/project/68a9af2f-a252-4883-900b-c5a1794d7193"),
+    "68a9af2f-a252-4883-900b-c5a1794d7193"
+  );
+  assert.equal(
+    projectIdFromFlowUrl("https://fow.google/project/68a9af2f-a252-4883-900b-c5a1794d7193"),
+    "68a9af2f-a252-4883-900b-c5a1794d7193"
+  );
   assert.equal(projectIdFromFlowUrl("https://labs.google/fx/tools/flow/"), "");
+});
+
+test("Flow URL recognition accepts only supported legacy and direct routes", () => {
+  assert.equal(isFlowUrl("https://labs.google/fx/tools/flow/project/project-a"), true);
+  assert.equal(isFlowUrl("https://flow.google/project/project-a"), true);
+  assert.equal(isFlowUrl("https://fow.google/project/project-a"), true);
+  assert.equal(isFlowUrl("https://flow.google/not-a-project"), false);
+  assert.equal(isFlowUrl("https://example.com/project/project-a"), false);
 });
 
 test("project history retains character definitions but not scene queues", () => {
