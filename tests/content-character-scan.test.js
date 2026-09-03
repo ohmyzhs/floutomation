@@ -12,6 +12,18 @@ const creatorInputStart = contentSource.indexOf("function findCharacterCreatorIn
 const creatorInputEnd = contentSource.indexOf("function findCharacterNavigationButton", creatorInputStart);
 const creatorInputSource = contentSource.slice(creatorInputStart, creatorInputEnd);
 
+const directNavigationStart = contentSource.indexOf("function findDirectProjectNavigationItem");
+const directNavigationEnd = contentSource.indexOf("function navigationItemSelected", directNavigationStart);
+const directNavigationSource = contentSource.slice(directNavigationStart, directNavigationEnd);
+
+const characterNavigationStart = contentSource.indexOf("function findCharacterNavigationButton");
+const characterNavigationEnd = contentSource.indexOf("function findNewCharacterButton", characterNavigationStart);
+const characterNavigationSource = contentSource.slice(characterNavigationStart, characterNavigationEnd);
+
+const creatorNavigationStart = contentSource.indexOf("async function enterCharacterCreator");
+const creatorNavigationEnd = contentSource.indexOf("async function enterDirectMediaWorkspace", creatorNavigationStart);
+const creatorNavigationSource = contentSource.slice(creatorNavigationStart, creatorNavigationEnd);
+
 const characterModelStart = contentSource.indexOf("function findCharacterModelButton");
 const characterModelEnd = contentSource.indexOf("function findFlowBackButton", characterModelStart);
 const characterModelSource = contentSource.slice(characterModelStart, characterModelEnd);
@@ -69,8 +81,19 @@ test("content script stays active on direct Flow project URLs", () => {
 
 test("the general image prompt cannot be mistaken for the character description input", () => {
   assert.match(creatorInputSource, /캐릭터\.\*설명\|describe\.\*character/);
+  assert.match(creatorInputSource, /element\.textContent/);
   assert.doesNotMatch(creatorInputSource, /candidates\.length\s*===\s*1/);
   assert.doesNotMatch(creatorInputSource, /hasCreatorHeading/);
+});
+
+test("direct Flow project navigation uses its interactive list items without clicking back to the homepage", () => {
+  assert.match(directNavigationSource, /mat-list-item/);
+  assert.match(directNavigationSource, /function isDirectFlowProjectWorkspace/);
+  assert.match(directNavigationSource, /isDirectFlowProject &&/);
+  assert.match(directNavigationSource, /location\.pathname/);
+  assert.match(directNavigationSource, /findDirectProjectNavigationItem\("전체 미디어"\)/);
+  assert.match(characterNavigationSource, /findDirectProjectNavigationItem\("캐릭터"\)/);
+  assert.match(creatorNavigationSource, /if \(isDirectFlowProjectWorkspace\(\)\) break;/);
 });
 
 test("the 16:9 x2 general image settings button cannot be used as the character model button", () => {

@@ -72,7 +72,23 @@
       .find((element) => element.getAttribute("contenteditable") === "true") || null;
   }
 
+  function findDirectProjectNavigationItem(label) {
+    if (!isDirectFlowProject) return null;
+    const target = normalize(label);
+    return Array.from(document.querySelectorAll("mat-list-item")).find((item) => {
+      if (!visible(item)) return false;
+      const descriptor = normalize(`${item.textContent || ""} ${item.getAttribute("aria-label") || ""}`);
+      return descriptor.includes(target);
+    }) || null;
+  }
+
+  function isDirectFlowProjectWorkspace() {
+    return isDirectFlowProject && /^\/project\/[^/]+\/?$/i.test(location.pathname);
+  }
+
   function findAllMediaNavigationButton() {
+    const directNavigationItem = findDirectProjectNavigationItem("전체 미디어");
+    if (directNavigationItem) return directNavigationItem;
     return Array.from(document.querySelectorAll('button, [role="button"], a')).find((control) => {
       if (!visible(control)) return false;
       const text = String(control.textContent || "").replace(/\s+/g, "").toLowerCase();
@@ -1052,12 +1068,18 @@
     const candidates = Array.from(document.querySelectorAll('[contenteditable="true"]'))
       .filter((element) => element instanceof HTMLElement && visible(element));
     return candidates.find((element) => {
-      const placeholder = element.querySelector('[data-slate-placeholder="true"]')?.textContent || element.getAttribute("aria-label") || "";
+      const placeholder = element.querySelector('[data-slate-placeholder="true"]')?.textContent
+        || element.getAttribute("aria-label")
+        || element.getAttribute("placeholder")
+        || element.textContent
+        || "";
       return /캐릭터.*설명|describe.*character/i.test(placeholder);
     }) || null;
   }
 
   function findCharacterNavigationButton() {
+    const directNavigationItem = findDirectProjectNavigationItem("캐릭터");
+    if (directNavigationItem) return directNavigationItem;
     return Array.from(document.querySelectorAll('button, [role="button"], a')).find((control) => {
       if (!visible(control)) return false;
       const text = String(control.textContent || "").replace(/\s+/g, "").toLowerCase();
@@ -1141,6 +1163,7 @@
           await clickTrusted(navigationButton, { settleMs: NAVIGATION_SETTLE_MS });
           destinationPredicate = () => characterCreatorControls() || findCharacterCreatorInput() || findNewCharacterButton();
         } else {
+          if (isDirectFlowProjectWorkspace()) break;
           const backButton = findFlowBackButton();
           if (!backButton) break;
           await clickTrusted(backButton, { settleMs: NAVIGATION_SETTLE_MS });
@@ -1199,6 +1222,7 @@
           error: "Flow 모든 미디어의 일반 프롬프트 입력창을 찾지 못했습니다."
         });
       }
+      if (isDirectFlowProjectWorkspace()) break;
       const backButton = findFlowBackButton();
       if (!backButton) break;
       await clickTrusted(backButton, { settleMs: NAVIGATION_SETTLE_MS });
