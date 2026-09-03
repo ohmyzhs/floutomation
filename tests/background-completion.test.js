@@ -42,6 +42,19 @@ test("background validates and opens a tracked Flow asset detail", () => {
   assert.match(backgroundSource, /chrome\.tabs\.create/);
 });
 
+test("background rejects character completion without verified Flow name evidence", () => {
+  assert.match(backgroundSource, /message\.type === "FLOW_CHARACTER_COMPLETED"/);
+  assert.match(backgroundSource, /message\.registrationVerified !== true/);
+  assert.match(backgroundSource, /이름 저장을 확인하지 못해 완료 처리하지 않았습니다/);
+});
+
+test("Flow sync repairs automatic character completions that are absent from named cards", () => {
+  assert.match(backgroundSource, /automaticCompletion/);
+  assert.match(backgroundSource, /Flow 이름 미확인 · 다시 생성 대기/);
+  assert.match(backgroundSource, /repairedKeys/);
+  assert.match(backgroundSource, /chrome\.alarms\.clear\(QUEUE_ALARM\)/);
+});
+
 test("background supports explicit suffix asset remapping", () => {
   assert.match(backgroundSource, /REASSIGN_ASSETS_FROM_POSITION/);
   assert.match(backgroundSource, /buildAssetSuffixAssignments/);

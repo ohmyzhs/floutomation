@@ -1056,8 +1056,17 @@ async function synchronizeFlowCharacters() {
   }
 
   let matchedKeys = [];
+  let repairedKeys = [];
   const state = await updateState((draft) => {
     matchedKeys = applyRegisteredCharacterKeys(draft, scan.registeredKeys || []);
+    const registered = new Set((scan.registeredKeys || []).map((key) => String(key).trim().toLowerCase()).filter(Boolean));
+    for (const character of draft.characters) {
+      const automaticCompletion = character.status === "completed"
+        && String(character.stage || "").trim() === `@${character.key} 등록 완료`;
+      if (!automaticCompletion || registered.has(String(character.key || "").trim().toLowerCase())) continue;
+      setCharacterReady(draft, character.id, false, "Flow 이름 미확인 · 다시 생성 대기");
+      repairedKeys.push(character.key);
+    }
     const scannedAssets = new Map(
       (scan.characterAssets || []).map((asset) => [String(asset.name || "").trim().toLowerCase(), asset])
     );
@@ -1080,13 +1089,21 @@ async function synchronizeFlowCharacters() {
     if (matchedKeys.length && /새로고침|캐릭터.*실패|등록 상태/i.test(String(draft.lastError || ""))) {
       draft.lastError = null;
     }
+    if (repairedKeys.length) {
+      draft.status = draft.jobs.length ? "paused" : "idle";
+      draft.manualPause = Boolean(draft.jobs.length);
+      draft.nextRunAt = null;
+      draft.lastError = `Flow에서 이름을 확인하지 못한 캐릭터 ${repairedKeys.length}명을 다시 생성 대기로 되돌렸습니다.`;
+    }
   });
+  if (repairedKeys.length) await chrome.alarms.clear(QUEUE_ALARM);
   await archiveProjectCharacters(state);
 
   return {
     state,
     registeredKeys: Array.isArray(scan.registeredKeys) ? scan.registeredKeys : [],
     matchedKeys,
+    repairedKeys,
     surface: scan.surface || "unknown"
   };
 }
@@ -1341,6 +1358,13 @@ async function handleFlowEvent(message, sender) {
   }
 
   if (message.type === "FLOW_CHARACTER_COMPLETED") {
+    if (message.registrationVerified !== true) {
+      return pauseWithError(
+        "Flow 캐릭터 이름 저장을 확인하지 못해 완료 처리하지 않았습니다. 제목 없는 캐릭터 카드와 이름을 확인해 주세요.",
+        message.characterId,
+        "character"
+      );
+    }
     return completeTask(message.characterId, "character", message.referenceImages, message.assets);
   }
 

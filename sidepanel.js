@@ -738,7 +738,10 @@ elements.syncCharactersButton.addEventListener("click", withUiError(async () => 
   state = result.state;
   analyzeSource();
   renderState();
-  showToast(`Flow에서 등록된 캐릭터 ${result.matchedKeys?.length || result.registeredKeys?.length || 0}명을 읽었습니다.`);
+  const repaired = result.repairedKeys?.length
+    ? ` · 이름 미확인 ${result.repairedKeys.length}명 재생성 대기`
+    : "";
+  showToast(`Flow에서 등록된 캐릭터 ${result.matchedKeys?.length || result.registeredKeys?.length || 0}명을 읽었습니다${repaired}.`);
 }));
 elements.downloadProjectButton.addEventListener("click", withUiError(async () => {
   downloadBusy = true;

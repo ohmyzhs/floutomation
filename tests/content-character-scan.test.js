@@ -118,6 +118,19 @@ test("character registration monitoring responds to a requested stop", () => {
   );
 });
 
+test("character registration opens the unnamed project card even when image detection is empty", () => {
+  assert.match(registrationSource, /const generationSettled = detectedImages > 0 \|\| !hasBusySignal\(\)/);
+  assert.match(registrationSource, /isDirectFlowProjectWorkspace\(\) && generationSettled/);
+  assert.match(contentSource, /type: "FLOW_TRUSTED_DOUBLE_CLICK"/);
+  assert.match(contentSource, /dispatchEvent\(new MouseEvent\("dblclick"/);
+});
+
+test("character completion requires the saved name card after clicking Done", () => {
+  assert.match(registrationSource, /findRegisteredCharacterImage\(character\.key\)/);
+  assert.match(registrationSource, /registrationVerified: true/);
+  assert.match(contentSource, /registrationVerified: result\.registrationVerified === true/);
+});
+
 test("scene monitoring captures offscreen baselines and caps automatic result cards", () => {
   assert.match(contentSource, /MAX_TRACKED_GENERATED_IMAGES\s*=\s*4/);
   assert.match(contentSource, /captureLargeMediaAssets\(\{ includeOffscreen: true \}\)/);
@@ -197,9 +210,12 @@ test("new Flow character cards are reopened and named after generation", () => {
   assert.match(contentSource, /flow-grid-tile-container/);
   assert.match(contentSource, /flow-character-tile/);
   assert.match(contentSource, /type: "FLOW_TRUSTED_DOUBLE_CLICK"/);
-  assert.match(registrationSource, /isDirectFlowProjectWorkspace\(\) && detectedImages > 0/);
+  assert.match(registrationSource, /const generationSettled = detectedImages > 0 \|\| !hasBusySignal\(\)/);
+  assert.match(registrationSource, /isDirectFlowProjectWorkspace\(\) && generationSettled/);
   assert.match(registrationSource, /doubleClickTrusted\(tileTarget/);
   assert.match(registrationSource, /제목 없는 캐릭터 카드 열기/);
+  assert.match(registrationSource, /registrationVerified: true/);
+  assert.match(registrationSource, /isDirectFlowProjectWorkspace\(\) && findRegisteredCharacterImage\(character\.key\)/);
 });
 
 test("Flow character discovery reads named custom-element tiles and real ProseMirror text", () => {
@@ -207,6 +223,7 @@ test("Flow character discovery reads named custom-element tiles and real ProseMi
   assert.match(contentSource, /character-tile-name/);
   assert.match(contentSource, /\.ProseMirror/);
   assert.match(contentSource, /prosemirror-placeholder/);
+  assert.match(contentSource, /characterTileMatchesKey/);
 });
 
 test("hidden Flow pages can use structural controls without viewport geometry", () => {

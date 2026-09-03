@@ -360,13 +360,28 @@
       await sleep(Math.max(UI_SETTLE_MS, Number(settleMs || 0)));
       return { ok: true, clicked: true, synthetic: true };
     }
-    const response = await chrome.runtime.sendMessage({
-      type: "FLOW_TRUSTED_DOUBLE_CLICK",
-      x: rect.left + rect.width / 2,
-      y: rect.top + rect.height / 2
-    });
+    let response = null;
+    try {
+      response = await chrome.runtime.sendMessage({
+        type: "FLOW_TRUSTED_DOUBLE_CLICK",
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2
+      });
+    } catch {
+      // A debugger attach can be rejected by Chrome's debugging banner. Keep
+      // the navigation attempt alive with the page's own dblclick handler.
+      response = null;
+    }
     if (!response?.ok) {
-      throw new Error(response?.error || "Flow 캐릭터 카드에 실제 더블클릭을 전달하지 못했습니다.");
+      element.click();
+      element.click();
+      element.dispatchEvent(new MouseEvent("dblclick", {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        detail: 2
+      }));
+      response = { ok: true, clicked: true, doubleClicked: true, synthetic: true, fallback: true };
     }
     await sleep(Math.max(UI_SETTLE_MS, Number(settleMs || 0)));
     return response;
@@ -1318,6 +1333,14 @@
     return normalize(value).replace(/^@/, "");
   }
 
+  function characterTileMatchesKey(tile, key) {
+    const target = normalizedCharacterTileLabel(key);
+    return characterTileLabels(tile).some((label) => {
+      const normalized = normalizedCharacterTileLabel(label);
+      return normalized === target || normalized.includes(`@${target}`);
+    });
+  }
+
   function characterTileThumbnail(tile) {
     return tile?.querySelector?.("img.character-tile-thumbnail, img[alt*='캐릭터'], img") || null;
   }
@@ -1352,25 +1375,26 @@
       const hasImageSize = rect.width >= 80 && rect.height >= 80
         || image.naturalWidth >= 80 && image.naturalHeight >= 80
         || document.visibilityState === "hidden";
-      return label === target && hasImageSize;
+      if (label !== target || !hasImageSize) return false;
+      const tile = image.closest("flow-grid-tile-container, flow-character-tile");
+      if (tile) return characterTileMatchesKey(tile, target);
+      return /\/character\/[^/?#]+(?:\/|$)/i.test(location.pathname);
     });
     if (image) return image;
 
     const tile = Array.from(document.querySelectorAll("flow-grid-tile-container, flow-character-tile"))
       .find((candidate) => {
         if (!visible(candidate)) return false;
-        return characterTileLabels(candidate).some((label) => {
-          const normalized = normalizedCharacterTileLabel(label);
-          return normalized === target || normalized.includes(`@${target}`);
-        });
+        return characterTileMatchesKey(candidate, target);
       });
     if (tile) return characterTileThumbnail(tile) || tile;
 
     return Array.from(document.querySelectorAll('a[href*="/character/"]')).find((link) => {
       if (!visible(link)) return false;
-      const card = link.closest("button") || link.parentElement;
-      const text = normalize(card?.textContent || link.textContent).replace(/^@/, "");
-      return text.includes(target);
+      const tile = link.querySelector("flow-grid-tile-container, flow-character-tile");
+      if (tile) return characterTileMatchesKey(tile, target);
+      const labels = [link.getAttribute("aria-label"), link.querySelector(".character-tile-name")?.textContent];
+      return labels.some((label) => normalizedCharacterTileLabel(label) === target);
     }) || null;
   }
 
@@ -1402,8 +1426,10 @@
         || image.naturalWidth >= 80 && image.naturalHeight >= 80
         || document.visibilityState === "hidden";
       if (!hasImageSize) continue;
+      const tile = image.closest("flow-grid-tile-container, flow-character-tile");
+      if (!tile) continue;
       const key = characterKeyFromLabel(image.getAttribute("alt") || image.getAttribute("aria-label"));
-      if (key) keys.add(key);
+      if (key && characterTileMatchesKey(tile, key)) keys.add(key);
     }
     for (const link of Array.from(document.querySelectorAll('a[href*="/character/"]'))) {
       if (!visible(link)) continue;
@@ -1588,12 +1614,18 @@
       if (findRegisteredCharacterImage(character.key)) {
         return {
           completed: true,
+          registrationVerified: true,
           referenceImages: Math.max(1, detectedImages),
           assets: [registeredCharacterAsset(character.key)].filter(Boolean)
         };
       }
 
-      if (!unnamedTileOpened && isDirectFlowProjectWorkspace() && detectedImages > 0) {
+      // The character creator can finish by returning to the project library
+      // without exposing a large image on the creator surface. The library
+      // card is the authoritative hand-off to Flow's name editor, so do not
+      // gate this transition on image-pixel detection.
+      const generationSettled = detectedImages > 0 || !hasBusySignal();
+      if (!unnamedTileOpened && isDirectFlowProjectWorkspace() && generationSettled) {
         const unnamedTile = findLatestUnnamedCharacterTile(baselineMedia);
         if (unnamedTile) {
           unnamedTileOpened = true;
@@ -1638,13 +1670,21 @@
             timeoutMs: 20_000,
             error: "캐릭터 저장 완료 화면으로 전환되지 않았습니다."
           });
-          const registered = await waitFor(() => registeredCharacterAsset(character.key), {
-            timeoutMs: 20_000,
-            intervalMs: 300,
-            error: "저장된 캐릭터 카드의 다운로드 이미지를 아직 찾지 못했습니다."
-          }).catch(() => null);
+          const registeredMatch = await waitFor(
+            () => isDirectFlowProjectWorkspace() && findRegisteredCharacterImage(character.key),
+            {
+              timeoutMs: 20_000,
+              intervalMs: 300,
+              error: "이름이 반영된 캐릭터 카드를 아직 확인하지 못했습니다."
+            }
+          ).catch(() => null);
+          if (!registeredMatch) {
+            return { completed: false, referenceImages: Math.max(1, detectedImages), assets: [] };
+          }
+          const registered = registeredCharacterAsset(character.key);
           return {
             completed: true,
+            registrationVerified: true,
             referenceImages: Math.max(1, detectedImages),
             assets: [registered].filter(Boolean)
           };
@@ -1720,7 +1760,8 @@
           type: "FLOW_CHARACTER_COMPLETED",
           characterId: character.id,
           referenceImages: result.referenceImages,
-          assets: result.assets
+          assets: result.assets,
+          registrationVerified: result.registrationVerified === true
         });
       } else {
         emit({ type: "FLOW_CHARACTER_NEEDS_REVIEW", characterId: character.id, referenceImages: result.referenceImages });
@@ -1821,7 +1862,8 @@
         type: "FLOW_CHARACTER_COMPLETED",
         characterId: character.id,
         referenceImages: result.referenceImages,
-        assets: result.assets
+        assets: result.assets,
+        registrationVerified: result.registrationVerified === true
       });
     } else {
       emit({ type: "FLOW_CHARACTER_NEEDS_REVIEW", characterId: character.id, referenceImages: result.referenceImages });
