@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Flow Batch Studio",
   "description": "Google Flow 이미지 프롬프트를 안전한 간격으로 순차 실행합니다.",
-  "version": "0.9.6",
+  "version": "0.9.7",
   "minimum_chrome_version": "116",
   "permissions": [
     "alarms",
