@@ -19,6 +19,10 @@ test("Flow project IDs are extracted from legacy and direct project URLs", () =>
     "68a9af2f-a252-4883-900b-c5a1794d7193"
   );
   assert.equal(
+    projectIdFromFlowUrl("https://flow.google.com/project/eab2930a-6753-4fb3-a20c-accb80166330"),
+    "eab2930a-6753-4fb3-a20c-accb80166330"
+  );
+  assert.equal(
     projectIdFromFlowUrl("https://fow.google/project/68a9af2f-a252-4883-900b-c5a1794d7193"),
     "68a9af2f-a252-4883-900b-c5a1794d7193"
   );
@@ -28,6 +32,7 @@ test("Flow project IDs are extracted from legacy and direct project URLs", () =>
 test("Flow URL recognition accepts only supported legacy and direct routes", () => {
   assert.equal(isFlowUrl("https://labs.google/fx/tools/flow/project/project-a"), true);
   assert.equal(isFlowUrl("https://flow.google/project/project-a"), true);
+  assert.equal(isFlowUrl("https://flow.google.com/project/project-a"), true);
   assert.equal(isFlowUrl("https://fow.google/project/project-a"), true);
   assert.equal(isFlowUrl("https://flow.google/not-a-project"), false);
   assert.equal(isFlowUrl("https://example.com/project/project-a"), false);

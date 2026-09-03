@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 test("manifest is valid MV3 and exposes the side panel on Flow", async () => {
   const manifest = JSON.parse(await readFile(new URL("../manifest.json", import.meta.url), "utf8"));
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.9.7");
+  assert.equal(manifest.version, "0.9.8");
   assert.equal(manifest.background.service_worker, "background.js");
   assert.equal(manifest.side_panel.default_path, "sidepanel.html");
   assert.ok(manifest.permissions.includes("sidePanel"));
@@ -17,8 +17,10 @@ test("manifest is valid MV3 and exposes the side panel on Flow", async () => {
   assert.ok(manifest.host_permissions.includes("https://flow-content.google/*"));
   assert.ok(manifest.host_permissions.includes("https://labs.google/*"));
   assert.ok(manifest.host_permissions.includes("https://flow.google/*"));
+  assert.ok(manifest.host_permissions.includes("https://flow.google.com/*"));
   assert.ok(manifest.host_permissions.includes("https://fow.google/*"));
   assert.ok(manifest.content_scripts[0].matches.includes("https://flow.google/project/*"));
+  assert.ok(manifest.content_scripts[0].matches.includes("https://flow.google.com/project/*"));
   assert.ok(manifest.content_scripts[0].matches.includes("https://fow.google/project/*"));
   assert.ok(manifest.content_scripts[0].include_globs.some((glob) => glob.includes("tools/flow")));
 });
