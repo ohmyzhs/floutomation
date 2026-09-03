@@ -669,21 +669,28 @@
   }
 
   function isCharacterSubmitButton(button) {
-    if (!(button instanceof HTMLButtonElement) || !visible(button)) return false;
+    if (!(button instanceof HTMLElement) || !visible(button)) return false;
     const hasForwardIcon = Array.from(button.querySelectorAll("i.google-symbols, i"))
       .some((icon) => String(icon.textContent || "").trim() === "arrow_forward");
     const hasCreateLabel = Array.from(button.querySelectorAll("span"))
       .some((label) => /^(?:만들기|create)$/i.test(String(label.textContent || "").trim()));
-    return hasForwardIcon && hasCreateLabel;
+    if (!hasForwardIcon) return false;
+    if (hasCreateLabel) return true;
+
+    const descriptor = `${button.textContent || ""} ${button.getAttribute("aria-label") || ""} ${button.getAttribute("title") || ""} ${button.getAttribute("data-testid") || ""}`
+      .replace(/\s+/g, " ")
+      .trim();
+    return String(button.textContent || "").trim() === "arrow_forward"
+      || /(?:생성\s*시작|create|generate|submit)/i.test(descriptor);
   }
 
   function findCharacterSubmitButton(input = findCharacterCreatorInput()) {
     let node = input?.parentElement || null;
     for (let depth = 0; node && depth < 8; depth += 1, node = node.parentElement) {
-      const button = Array.from(node.querySelectorAll("button")).find(isCharacterSubmitButton);
+      const button = Array.from(node.querySelectorAll('button, [role="button"]')).find(isCharacterSubmitButton);
       if (button) return button;
     }
-    return Array.from(document.querySelectorAll("button")).find(isCharacterSubmitButton) || null;
+    return Array.from(document.querySelectorAll('button, [role="button"]')).find(isCharacterSubmitButton) || null;
   }
 
   async function clickCharacterSubmit(button) {

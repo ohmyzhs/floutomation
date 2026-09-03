@@ -168,6 +168,8 @@ test("character generation clicks the exact arrow_forward 만들기 button direc
   assert.match(submitSource, /function isCharacterSubmitButton/);
   assert.match(submitSource, /textContent \|\| ""\)\.trim\(\) === "arrow_forward"/);
   assert.match(submitSource, /\^\(\?:만들기\|create\)\$/);
+  assert.match(submitSource, /생성\\s\*시작\|create\|generate\|submit/);
+  assert.match(submitSource, /button, \[role="button"\]/);
   assert.match(submitSource, /function findCharacterSubmitButton/);
   assert.match(submitSource, /button\.click\(\)/);
   assert.match(contentSource, /const button = findCharacterSubmitButton\(input\)/);
