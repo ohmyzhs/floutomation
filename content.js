@@ -347,6 +347,17 @@
     await sleep(Math.max(UI_SETTLE_MS, Number(settleMs || 0)));
   }
 
+  function dispatchSyntheticDoubleClick(element) {
+    element.click();
+    element.click();
+    element.dispatchEvent(new MouseEvent("dblclick", {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      detail: 2
+    }));
+  }
+
   async function doubleClickTrusted(element, { settleMs = NAVIGATION_SETTLE_MS } = {}) {
     if (!(element instanceof HTMLElement) || !document.contains(element) || !visible(element)) {
       throw new Error("더블클릭할 Flow 캐릭터 카드가 사라졌습니다.");
@@ -355,8 +366,7 @@
     const rect = element.getBoundingClientRect();
     const hiddenPage = document.visibilityState === "hidden";
     if (hiddenPage || rect.width <= 0 || rect.height <= 0) {
-      element.click();
-      element.click();
+      dispatchSyntheticDoubleClick(element);
       await sleep(Math.max(UI_SETTLE_MS, Number(settleMs || 0)));
       return { ok: true, clicked: true, synthetic: true };
     }
@@ -373,14 +383,7 @@
       response = null;
     }
     if (!response?.ok) {
-      element.click();
-      element.click();
-      element.dispatchEvent(new MouseEvent("dblclick", {
-        bubbles: true,
-        cancelable: true,
-        view: window,
-        detail: 2
-      }));
+      dispatchSyntheticDoubleClick(element);
       response = { ok: true, clicked: true, doubleClicked: true, synthetic: true, fallback: true };
     }
     await sleep(Math.max(UI_SETTLE_MS, Number(settleMs || 0)));
@@ -1345,6 +1348,13 @@
     return tile?.querySelector?.("img.character-tile-thumbnail, img[alt*='캐릭터'], img") || null;
   }
 
+  function characterTileOpenTarget(tile) {
+    return tile?.querySelector?.("flow-character-tile .character-tile-container")
+      || tile?.querySelector?.(".character-tile-container")
+      || tile?.querySelector?.("flow-character-tile")
+      || tile;
+  }
+
   function findLatestUnnamedCharacterTile(baselineMedia = null) {
     const unnamedLabels = new Set([
       normalizedCharacterTileLabel("제목 없는 캐릭터"),
@@ -1629,7 +1639,7 @@
         const unnamedTile = findLatestUnnamedCharacterTile(baselineMedia);
         if (unnamedTile) {
           unnamedTileOpened = true;
-          const tileTarget = unnamedTile.querySelector("flow-character-tile") || unnamedTile;
+          const tileTarget = characterTileOpenTarget(unnamedTile);
           emit({
             type: "FLOW_CHARACTER_PROGRESS",
             characterId: character.id,

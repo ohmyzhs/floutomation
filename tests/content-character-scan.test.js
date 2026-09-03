@@ -36,6 +36,10 @@ const registrationStart = contentSource.indexOf("async function finishCharacterR
 const registrationEnd = contentSource.indexOf("async function reconcileCharacterAfterNavigation", registrationStart);
 const registrationSource = contentSource.slice(registrationStart, registrationEnd);
 
+const tileTargetStart = contentSource.indexOf("function characterTileOpenTarget");
+const tileTargetEnd = contentSource.indexOf("function findLatestUnnamedCharacterTile", tileTargetStart);
+const tileTargetSource = contentSource.slice(tileTargetStart, tileTargetEnd);
+
 const failureCardsStart = contentSource.indexOf("function captureGenerationFailureCards");
 const failureCardsEnd = contentSource.indexOf("async function monitorGeneration", failureCardsStart);
 const failureCardsSource = contentSource.slice(failureCardsStart, failureCardsEnd);
@@ -122,6 +126,7 @@ test("character registration opens the unnamed project card even when image dete
   assert.match(registrationSource, /const generationSettled = detectedImages > 0 \|\| !hasBusySignal\(\)/);
   assert.match(registrationSource, /isDirectFlowProjectWorkspace\(\) && generationSettled/);
   assert.match(contentSource, /type: "FLOW_TRUSTED_DOUBLE_CLICK"/);
+  assert.match(contentSource, /function dispatchSyntheticDoubleClick/);
   assert.match(contentSource, /dispatchEvent\(new MouseEvent\("dblclick"/);
 });
 
@@ -207,15 +212,32 @@ test("character detail navigation is a start signal and failed retries resume re
 
 test("new Flow character cards are reopened and named after generation", () => {
   assert.match(contentSource, /function findLatestUnnamedCharacterTile/);
+  assert.match(contentSource, /function characterTileOpenTarget/);
+  assert.match(contentSource, /flow-character-tile \.character-tile-container/);
   assert.match(contentSource, /flow-grid-tile-container/);
   assert.match(contentSource, /flow-character-tile/);
   assert.match(contentSource, /type: "FLOW_TRUSTED_DOUBLE_CLICK"/);
   assert.match(registrationSource, /const generationSettled = detectedImages > 0 \|\| !hasBusySignal\(\)/);
   assert.match(registrationSource, /isDirectFlowProjectWorkspace\(\) && generationSettled/);
+  assert.match(registrationSource, /characterTileOpenTarget\(unnamedTile\)/);
   assert.match(registrationSource, /doubleClickTrusted\(tileTarget/);
   assert.match(registrationSource, /제목 없는 캐릭터 카드 열기/);
   assert.match(registrationSource, /registrationVerified: true/);
   assert.match(registrationSource, /isDirectFlowProjectWorkspace\(\) && findRegisteredCharacterImage\(character\.key\)/);
+});
+
+test("the live Flow character card inner container is the first open target", () => {
+  const characterTileOpenTarget = Function(`${tileTargetSource}; return characterTileOpenTarget;`)();
+  const inner = { className: "character-tile-container" };
+  const customElement = { tagName: "FLOW-CHARACTER-TILE" };
+  const tile = {
+    querySelector(selector) {
+      if (selector === "flow-character-tile .character-tile-container") return inner;
+      if (selector === "flow-character-tile") return customElement;
+      return null;
+    }
+  };
+  assert.equal(characterTileOpenTarget(tile), inner);
 });
 
 test("Flow character discovery reads named custom-element tiles and real ProseMirror text", () => {
