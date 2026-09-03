@@ -347,6 +347,31 @@
     await sleep(Math.max(UI_SETTLE_MS, Number(settleMs || 0)));
   }
 
+  async function doubleClickTrusted(element, { settleMs = NAVIGATION_SETTLE_MS } = {}) {
+    if (!(element instanceof HTMLElement) || !document.contains(element) || !visible(element)) {
+      throw new Error("더블클릭할 Flow 캐릭터 카드가 사라졌습니다.");
+    }
+    element.focus?.({ preventScroll: true });
+    const rect = element.getBoundingClientRect();
+    const hiddenPage = document.visibilityState === "hidden";
+    if (hiddenPage || rect.width <= 0 || rect.height <= 0) {
+      element.click();
+      element.click();
+      await sleep(Math.max(UI_SETTLE_MS, Number(settleMs || 0)));
+      return { ok: true, clicked: true, synthetic: true };
+    }
+    const response = await chrome.runtime.sendMessage({
+      type: "FLOW_TRUSTED_DOUBLE_CLICK",
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height / 2
+    });
+    if (!response?.ok) {
+      throw new Error(response?.error || "Flow 캐릭터 카드에 실제 더블클릭을 전달하지 못했습니다.");
+    }
+    await sleep(Math.max(UI_SETTLE_MS, Number(settleMs || 0)));
+    return response;
+  }
+
   async function submitWithTrustedEnter(element) {
     if (!(element instanceof HTMLElement) || !document.contains(element) || !visible(element)) {
       throw new Error("전송할 Flow 버튼이 사라졌습니다.");
@@ -1280,6 +1305,44 @@
     return nativeTextControls.length === 1 && !findCharacterCreatorInput() ? nativeTextControls[0] : null;
   }
 
+  function characterTileLabels(tile) {
+    if (!(tile instanceof HTMLElement)) return [];
+    const labels = [
+      tile.getAttribute("aria-label"),
+      tile.querySelector(".character-tile-name")?.textContent
+    ].map((value) => String(value || "").trim()).filter(Boolean);
+    return labels.length ? labels : [String(tile.textContent || "").trim()];
+  }
+
+  function normalizedCharacterTileLabel(value) {
+    return normalize(value).replace(/^@/, "");
+  }
+
+  function characterTileThumbnail(tile) {
+    return tile?.querySelector?.("img.character-tile-thumbnail, img[alt*='캐릭터'], img") || null;
+  }
+
+  function findLatestUnnamedCharacterTile(baselineMedia = null) {
+    const unnamedLabels = new Set([
+      normalizedCharacterTileLabel("제목 없는 캐릭터"),
+      normalizedCharacterTileLabel("Untitled character")
+    ]);
+    const candidates = Array.from(document.querySelectorAll("flow-grid-tile-container"))
+      .filter((tile) => visible(tile) && characterTileLabels(tile).some((label) => unnamedLabels.has(normalizedCharacterTileLabel(label))));
+    if (!candidates.length) return null;
+
+    // Flow inserts the newest project card first. Prefer a thumbnail that was
+    // not present in the pre-generation media boundary when one is available.
+    if (baselineMedia instanceof Set && baselineMedia.size) {
+      const fresh = candidates.find((tile) => {
+        const image = characterTileThumbnail(tile);
+        return image && !baselineMedia.has(mediaFingerprint(image, 0));
+      });
+      if (fresh) return fresh;
+    }
+    return candidates[0];
+  }
+
   function findRegisteredCharacterImage(key) {
     const target = normalize(key).replace(/^@/, "");
     const image = Array.from(document.querySelectorAll("img")).find((image) => {
@@ -1292,6 +1355,16 @@
       return label === target && hasImageSize;
     });
     if (image) return image;
+
+    const tile = Array.from(document.querySelectorAll("flow-grid-tile-container, flow-character-tile"))
+      .find((candidate) => {
+        if (!visible(candidate)) return false;
+        return characterTileLabels(candidate).some((label) => {
+          const normalized = normalizedCharacterTileLabel(label);
+          return normalized === target || normalized.includes(`@${target}`);
+        });
+      });
+    if (tile) return characterTileThumbnail(tile) || tile;
 
     return Array.from(document.querySelectorAll('a[href*="/character/"]')).find((link) => {
       if (!visible(link)) return false;
@@ -1341,6 +1414,15 @@
         for (const match of String(label || "").matchAll(/@([A-Za-z][\w-]*)/g)) keys.add(match[1]);
       }
     }
+    for (const tile of Array.from(document.querySelectorAll("flow-grid-tile-container, flow-character-tile"))) {
+      if (!visible(tile)) continue;
+      const labels = characterTileLabels(tile);
+      for (const label of labels) {
+        const direct = characterKeyFromLabel(label);
+        if (direct) keys.add(direct);
+        for (const match of String(label || "").matchAll(/@([A-Za-z][\w-]*)/g)) keys.add(match[1]);
+      }
+    }
     return [...keys];
   }
 
@@ -1356,7 +1438,17 @@
       .map((element) => element.textContent || "")
       .join("")
       .trim();
-    return Boolean(slateText);
+    const editors = new Set([
+      ...(input.classList.contains("ProseMirror") ? [input] : []),
+      ...input.querySelectorAll(".ProseMirror")
+    ]);
+    const proseMirrorText = [...editors].map((editor) => {
+      const clone = editor.cloneNode(true);
+      clone.querySelectorAll(".prosemirror-placeholder, .ProseMirror-separator, br.ProseMirror-trailingBreak")
+        .forEach((element) => element.remove());
+      return clone.textContent || "";
+    }).join("").trim();
+    return Boolean(slateText || proseMirrorText);
   }
 
   function emptyCharacterScanResult(surface = "character-creator") {
@@ -1481,6 +1573,7 @@
     const startedAt = Date.now();
     let lastProgressSentAt = 0;
     let continueClicked = false;
+    let unnamedTileOpened = false;
     let detectedImages = 0;
 
     while (Date.now() - startedAt < timeoutMs) {
@@ -1499,6 +1592,36 @@
           assets: [registeredCharacterAsset(character.key)].filter(Boolean)
         };
       }
+
+      if (!unnamedTileOpened && isDirectFlowProjectWorkspace() && detectedImages > 0) {
+        const unnamedTile = findLatestUnnamedCharacterTile(baselineMedia);
+        if (unnamedTile) {
+          unnamedTileOpened = true;
+          const tileTarget = unnamedTile.querySelector("flow-character-tile") || unnamedTile;
+          emit({
+            type: "FLOW_CHARACTER_PROGRESS",
+            characterId: character.id,
+            phase: "generating",
+            stage: "제목 없는 캐릭터 카드 열기 · 이름 등록 준비",
+            progress: 90,
+            detectedImages
+          });
+          try {
+            await doubleClickTrusted(tileTarget, { settleMs: NAVIGATION_SETTLE_MS });
+            await waitFor(findCharacterRegistrationSurface, {
+              timeoutMs: 20_000,
+              intervalMs: 250,
+              error: "생성된 제목 없는 캐릭터의 상세 화면을 열지 못했습니다."
+            });
+            continue;
+          } catch {
+            // The card can still be rendering while the project list settles.
+            // Allow the next poll to locate and open it again.
+            unnamedTileOpened = false;
+          }
+        }
+      }
+
       const nameControl = findCharacterNameControl();
       if (nameControl) {
         await setFormControlValue(nameControl, character.key);

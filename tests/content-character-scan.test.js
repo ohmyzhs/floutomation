@@ -192,6 +192,23 @@ test("character detail navigation is a start signal and failed retries resume re
   assert.match(registrationSource, /setFormControlValue\(nameControl, character\.key\)/);
 });
 
+test("new Flow character cards are reopened and named after generation", () => {
+  assert.match(contentSource, /function findLatestUnnamedCharacterTile/);
+  assert.match(contentSource, /flow-grid-tile-container/);
+  assert.match(contentSource, /flow-character-tile/);
+  assert.match(contentSource, /type: "FLOW_TRUSTED_DOUBLE_CLICK"/);
+  assert.match(registrationSource, /isDirectFlowProjectWorkspace\(\) && detectedImages > 0/);
+  assert.match(registrationSource, /doubleClickTrusted\(tileTarget/);
+  assert.match(registrationSource, /제목 없는 캐릭터 카드 열기/);
+});
+
+test("Flow character discovery reads named custom-element tiles and real ProseMirror text", () => {
+  assert.match(discoverySource, /flow-grid-tile-container, flow-character-tile/);
+  assert.match(contentSource, /character-tile-name/);
+  assert.match(contentSource, /\.ProseMirror/);
+  assert.match(contentSource, /prosemirror-placeholder/);
+});
+
 test("hidden Flow pages can use structural controls without viewport geometry", () => {
   assert.match(contentSource, /document\.visibilityState === "hidden"/);
   assert.match(contentSource, /element\.click\(\)/);

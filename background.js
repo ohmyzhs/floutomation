@@ -488,6 +488,37 @@ async function clickTrustedPoint(tabId, x, y) {
   });
 }
 
+async function doubleClickTrustedPoint(tabId, x, y) {
+  if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0) {
+    throw new Error("더블클릭할 Flow 화면 좌표가 올바르지 않습니다.");
+  }
+  return withFlowDebugger(tabId, async (target) => {
+    const point = { x: Math.round(x), y: Math.round(y) };
+    await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
+      type: "mouseMoved",
+      ...point
+    });
+    for (const clickCount of [1, 2]) {
+      await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
+        type: "mousePressed",
+        ...point,
+        button: "left",
+        buttons: 1,
+        clickCount
+      });
+      await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
+        type: "mouseReleased",
+        ...point,
+        button: "left",
+        buttons: 0,
+        clickCount
+      });
+      if (clickCount === 1) await new Promise((resolve) => setTimeout(resolve, 80));
+    }
+    return { clicked: true, doubleClicked: true, ...point };
+  });
+}
+
 function getTaskCollection(state, taskType) {
   return taskType === "character" ? state.characters : state.jobs;
 }
@@ -1190,6 +1221,13 @@ async function handleFlowEvent(message, sender) {
       throw new Error("Google Flow 콘텐츠에서 보낸 클릭 요청만 허용됩니다.");
     }
     return clickTrustedPoint(tabId, Number(message.x), Number(message.y));
+  }
+
+  if (message.type === "FLOW_TRUSTED_DOUBLE_CLICK") {
+    if (!tabId || !isFlowUrl(sender.url || sender.tab?.url)) {
+      throw new Error("Google Flow 콘텐츠에서 보낸 더블클릭 요청만 허용됩니다.");
+    }
+    return doubleClickTrustedPoint(tabId, Number(message.x), Number(message.y));
   }
 
   if (message.type === "FLOW_READY") {
