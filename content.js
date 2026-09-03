@@ -670,7 +670,7 @@
 
   function isCharacterSubmitButton(button) {
     if (!(button instanceof HTMLElement) || !visible(button)) return false;
-    const hasForwardIcon = Array.from(button.querySelectorAll("i.google-symbols, i"))
+    const hasForwardIcon = Array.from(button.querySelectorAll('i.google-symbols, i, mat-icon, [data-mat-icon-type="font"]'))
       .some((icon) => String(icon.textContent || "").trim() === "arrow_forward");
     const hasCreateLabel = Array.from(button.querySelectorAll("span"))
       .some((label) => /^(?:만들기|create)$/i.test(String(label.textContent || "").trim()));

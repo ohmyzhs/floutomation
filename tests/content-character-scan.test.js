@@ -167,6 +167,7 @@ test("submit control lookup prefers the character form submit button and keeps r
 test("character generation clicks the exact arrow_forward 만들기 button directly", () => {
   assert.match(submitSource, /function isCharacterSubmitButton/);
   assert.match(submitSource, /textContent \|\| ""\)\.trim\(\) === "arrow_forward"/);
+  assert.match(submitSource, /mat-icon/);
   assert.match(submitSource, /\^\(\?:만들기\|create\)\$/);
   assert.match(submitSource, /생성\\s\*시작\|create\|generate\|submit/);
   assert.match(submitSource, /button, \[role="button"\]/);
