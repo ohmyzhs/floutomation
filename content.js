@@ -1,5 +1,10 @@
 (() => {
-  if (!/^\/fx\/(?:[^/]+\/)?tools\/flow(?:\/|$)/i.test(location.pathname)) return;
+  const LEGACY_FLOW_PATH = /^\/fx\/(?:[^/]+\/)?tools\/flow(?:\/|$)/i;
+  const DIRECT_FLOW_PATH = /^\/project\/[^/]+(?:\/|$)/i;
+  const DIRECT_FLOW_HOSTS = new Set(["flow.google", "flow.google.com", "fow.google"]);
+  const isDirectFlowProject = DIRECT_FLOW_HOSTS.has(location.hostname)
+    && DIRECT_FLOW_PATH.test(location.pathname);
+  if (!LEGACY_FLOW_PATH.test(location.pathname) && !isDirectFlowProject) return;
   if (window.__FLOW_BATCH_STUDIO_LOADED__) return;
   window.__FLOW_BATCH_STUDIO_LOADED__ = true;
 

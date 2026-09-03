@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const contentSource = await readFile(new URL("../content.js", import.meta.url), "utf8");
+const contentGuardSource = contentSource.slice(0, contentSource.indexOf("const pageSessionId"));
 const scanStart = contentSource.indexOf("async function scanFlowCharacters");
 const scanEnd = contentSource.indexOf("async function setFormControlValue", scanStart);
 const scanSource = contentSource.slice(scanStart, scanEnd);
@@ -58,6 +59,13 @@ const projectTitleSource = contentSource.slice(projectTitleStart, projectTitleEn
 const discoveryStart = contentSource.indexOf("function discoverRegisteredCharacterKeys");
 const discoveryEnd = contentSource.indexOf("async function setFormControlValue", discoveryStart);
 const discoverySource = contentSource.slice(discoveryStart, discoveryEnd);
+
+test("content script stays active on direct Flow project URLs", () => {
+  assert.match(contentGuardSource, /DIRECT_FLOW_HOSTS.*flow\.google\.com/);
+  assert.match(contentGuardSource, /DIRECT_FLOW_PATH/);
+  assert.match(contentGuardSource, /DIRECT_FLOW_HOSTS\.has\(location\.hostname\)/);
+  assert.match(contentGuardSource, /DIRECT_FLOW_PATH\.test\(location\.pathname\)/);
+});
 
 test("the general image prompt cannot be mistaken for the character description input", () => {
   assert.match(creatorInputSource, /캐릭터\.\*설명\|describe\.\*character/);
