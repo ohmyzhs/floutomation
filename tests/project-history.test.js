@@ -131,3 +131,32 @@ test("project history keeps asset mappings by project ID while character-only sa
   assert.deepEqual(profile.mappingJobs[0].mappedAssetIds, ["manual-25"]);
   assert.deepEqual(profile.mappingJobs[0].assets.map((asset) => asset.assetId), ["auto-25a", "manual-25"]);
 });
+
+test("project history keeps the scene roster for scenes that have not produced an image yet", () => {
+  const history = upsertProjectCharacterProfile({}, buildProjectCharacterProfile({
+    projectId: "project-b",
+    characters: [{ key: "suok", prompt: "portrait" }],
+    mappingJobs: [
+      { sourceMode: "scene", sourceNumber: 1, title: "장면 001", characterRefs: ["suok"] },
+      { sourceMode: "scene", sourceNumber: 2, title: "장면 002", characterRefs: ["suok", "hyangi"] },
+      {
+        sourceMode: "scene",
+        sourceNumber: 3,
+        title: "장면 003",
+        characterRefs: [],
+        assets: [{ assetId: "done-3", url: "https://example.test/3" }]
+      },
+      { sourceMode: "scene", sourceNumber: 4 }
+    ],
+    now: 100
+  }));
+  const profile = findProjectCharacterProfile(history, "project-b");
+
+  // Scenes 1-2 carry no image yet; they are still part of the project.
+  assert.deepEqual(profile.mappingJobs.map((job) => job.sourceNumber), [1, 2, 3]);
+  assert.deepEqual(profile.mappingJobs[1].characterRefs, ["suok", "hyangi"]);
+  assert.deepEqual(profile.mappingJobs[0].assets, []);
+  assert.equal(profile.mappingJobs[0].title, "장면 001");
+  // Scene 4 has nothing to remember at all, so it stays dropped.
+  assert.equal(profile.mappingJobs.length, 3);
+});

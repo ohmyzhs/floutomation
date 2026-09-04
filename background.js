@@ -193,13 +193,17 @@ function projectMappingSnapshot(state) {
       .map((id) => catalog.find((asset) => [asset?.assetId, asset?.detailUrl, asset?.url].includes(id)))
       .filter(Boolean);
     const assets = uniqueAssets([...(job.resultAssets || []), ...mappedAssets]);
-    if (!assets.length && !mappedIds.length) return [];
+    const title = String(job.title || "");
+    const characterRefs = job.characterRefs || [];
+    // Snapshot the scene roster too, so reconnecting to a project restores its
+    // scenes and character bindings even before any image has been generated.
+    if (!assets.length && !mappedIds.length && !title && !characterRefs.length) return [];
     return [{
       sourceMode: job.sourceMode || "scene",
       sourceNumber: job.sourceNumber || job.number,
       number: job.number || job.sourceNumber,
-      title: job.title || "",
-      characterRefs: job.characterRefs || [],
+      title,
+      characterRefs,
       imagesGenerated: Math.max(Number(job.imagesGenerated || 0), assets.length),
       assets,
       mappedAssetIds: mappedIds
