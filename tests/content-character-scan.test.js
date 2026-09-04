@@ -352,6 +352,17 @@ test("repeated @character mentions produce one Flow reference chip and keep late
   assert.match(promptReferenceSource, /referenceCount >= boundKeys\.size/);
 });
 
+test("current Flow character ingredient chips count as anchor references", () => {
+  assert.match(contentSource, /flow-character-ingredient-chip button\.chip-container/);
+  assert.match(contentSource, /accessibility_new/);
+});
+
+test("an invalidated extension context never throws from best-effort messages", () => {
+  assert.match(contentSource, /function sendRuntimeMessage\(message\)/);
+  assert.match(contentSource, /extensionContextInvalidated/);
+  assert.match(contentSource, /void sendRuntimeMessage\(message\)\.catch/);
+});
+
 test("manual scene preparation binds the prompt but never submits or monitors generation", () => {
   assert.match(manualPromptSource, /enterDirectMediaWorkspace\(\)/);
   assert.match(manualPromptSource, /ensureDirectImageSettings\(input, options\.model, options\.aspectRatio, options\.imagesPerPrompt\)/);

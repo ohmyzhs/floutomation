@@ -37,15 +37,31 @@
       && (hasLayout || hiddenPage);
   }
 
+  let extensionContextInvalidated = false;
+
+  function sendRuntimeMessage(message) {
+    if (extensionContextInvalidated) {
+      return Promise.reject(new Error("Extension context invalidated"));
+    }
+    try {
+      const runtime = chrome?.runtime;
+      if (!runtime?.id) throw new Error("Extension context invalidated");
+      return Promise.resolve(runtime.sendMessage(message));
+    } catch (error) {
+      extensionContextInvalidated = /Extension context invalidated/i.test(String(error?.message || error));
+      return Promise.reject(error);
+    }
+  }
+
   function emit(message) {
-    chrome.runtime.sendMessage(message).catch(() => {});
+    void sendRuntimeMessage(message).catch(() => {});
   }
 
   async function emitReliable(message, { retries = 3 } = {}) {
     let lastError = null;
     for (let attempt = 0; attempt < retries; attempt += 1) {
       try {
-        const response = await chrome.runtime.sendMessage(message);
+        const response = await sendRuntimeMessage(message);
         if (response?.ok === false) throw new Error(response.error || "확장 상태 저장에 실패했습니다.");
         return response;
       } catch (error) {
@@ -558,8 +574,10 @@
   function findCharacterReferenceControls(input) {
     let node = input?.parentElement || null;
     for (let depth = 0; node && depth < 7; depth += 1, node = node.parentElement) {
-      const matches = Array.from(node.querySelectorAll("button")).filter((button) => {
+      const matches = Array.from(node.querySelectorAll("flow-character-ingredient-chip button.chip-container, button.chip-container, button")).filter((button) => {
         if (!visible(button)) return false;
+        if (button.closest("flow-character-ingredient-chip")
+          && /accessibility_new/i.test(String(button.textContent || ""))) return true;
         const descriptor = accessibleDescriptor(button);
         return /캐릭터\s*(?:참고|참조|소재)\s*이미지|character\s*(?:reference|asset)\s*image/i.test(descriptor);
       });
