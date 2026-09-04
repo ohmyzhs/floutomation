@@ -665,26 +665,44 @@
   }
 
   async function clearScenePrompt(input) {
+    const cleared = () => {
+      const currentInput = liveDirectPromptInput(input);
+      if (!currentInput) return null;
+      input = currentInput;
+      return findPromptMentionChips(currentInput).length === 0 && !normalizedEditorText(currentInput)
+        ? currentInput
+        : null;
+    };
+    const settled = (timeoutMs) => waitFor(cleared, { timeoutMs, intervalMs: 100, error: "" }).catch(() => null);
+
+    // A previous run that failed mid-prompt leaves its mention chips behind.
+    // Flow only empties the editor itself after a submit, so clear in layers
+    // and verify after each one instead of trusting a single attempt.
+    if (await settled(300)) return input;
+
     const clearButton = findPromptClearButton(input);
     if (clearButton) {
       await clickTrusted(clearButton);
       input = await waitForLiveDirectPromptInput(input);
-    } else {
-      await insertTrustedText(input, "", { clear: true });
+      if (await settled(2_000)) return input;
     }
 
     input = await waitForLiveDirectPromptInput(input);
-    await waitFor(() => {
-      const currentInput = liveDirectPromptInput(input);
-      if (!currentInput) return false;
-      input = currentInput;
-      return findPromptMentionChips(currentInput).length === 0 && !normalizedEditorText(currentInput);
-    }, {
-      timeoutMs: 5_000,
+    await insertTrustedText(input, "", { clear: true });
+    if (await settled(2_000)) return input;
+
+    // A first click can land off-target when the debugger infobar shifts the
+    // layout; measure the button again on the live editor before retrying.
+    const retryButton = findPromptClearButton(liveDirectPromptInput(input) || input);
+    if (retryButton) {
+      await clickTrusted(retryButton);
+      input = await waitForLiveDirectPromptInput(input);
+    }
+    return waitFor(cleared, {
+      timeoutMs: 3_000,
       intervalMs: 100,
       error: "이전 캐릭터 참조 칩을 초기화하지 못했습니다. Flow의 프롬프트 지우기 버튼으로 비운 뒤 재시도해 주세요."
     });
-    return input;
   }
 
   function normalizeTrackedPrompt(value) {

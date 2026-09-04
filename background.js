@@ -342,10 +342,6 @@ async function withFlowDebugger(tabId, operation) {
   try {
     await chrome.debugger.attach(target, "1.3");
     attached = true;
-    // Flow gates some input commits on document.hasFocus(). On Windows the
-    // Flow window is usually not the focused one while the queue runs, so
-    // emulate focus for this session; CDP input itself works without focus.
-    await chrome.debugger.sendCommand(target, "Emulation.setFocusEmulationEnabled", { enabled: true }).catch(() => {});
     return await operation(target);
   } catch (error) {
     const message = String(error?.message || error);

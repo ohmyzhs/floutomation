@@ -113,19 +113,6 @@ test("trusted prompt replacement sends Cmd+A on macOS and Ctrl+A on Windows/Linu
   }
 });
 
-test("every trusted-input session enables focus emulation right after attaching", async () => {
-  const harness = trustedInputHarness({ os: "win" });
-
-  await harness.insertTrustedText(17, "scene text");
-
-  assert.deepEqual(harness.attached, [{ target: { tabId: 17 }, version: "1.3" }]);
-  assert.deepEqual(harness.commands[0], {
-    target: { tabId: 17 },
-    method: "Emulation.setFocusEmulationEnabled",
-    params: { enabled: true }
-  });
-});
-
 test("trusted Enter and Escape dispatch complete key pairs with their native key codes", async () => {
   for (const [key, keyCode] of [["Enter", 13], ["Escape", 27]]) {
     const harness = trustedInputHarness();
