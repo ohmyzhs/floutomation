@@ -86,6 +86,12 @@
     return isDirectFlowProject && /^\/project\/[^/]+\/?$/i.test(location.pathname);
   }
 
+  function currentCharacterDetailUrl() {
+    return isDirectFlowProject && /^\/project\/[^/]+\/character\/[^/?#]+\/?$/i.test(location.pathname)
+      ? `${location.origin}${location.pathname.replace(/\/+$/, "")}`
+      : "";
+  }
+
   function findAllMediaNavigationButton() {
     const directNavigationItem = findDirectProjectNavigationItem("전체 미디어");
     if (directNavigationItem) return directNavigationItem;
@@ -345,49 +351,6 @@
       throw new Error(response?.error || "Flow 화면에 실제 클릭을 전달하지 못했습니다.");
     }
     await sleep(Math.max(UI_SETTLE_MS, Number(settleMs || 0)));
-  }
-
-  function dispatchSyntheticDoubleClick(element) {
-    element.click();
-    element.click();
-    element.dispatchEvent(new MouseEvent("dblclick", {
-      bubbles: true,
-      cancelable: true,
-      view: window,
-      detail: 2
-    }));
-  }
-
-  async function doubleClickTrusted(element, { settleMs = NAVIGATION_SETTLE_MS } = {}) {
-    if (!(element instanceof HTMLElement) || !document.contains(element) || !visible(element)) {
-      throw new Error("더블클릭할 Flow 캐릭터 카드가 사라졌습니다.");
-    }
-    element.focus?.({ preventScroll: true });
-    const rect = element.getBoundingClientRect();
-    const hiddenPage = document.visibilityState === "hidden";
-    if (hiddenPage || rect.width <= 0 || rect.height <= 0) {
-      dispatchSyntheticDoubleClick(element);
-      await sleep(Math.max(UI_SETTLE_MS, Number(settleMs || 0)));
-      return { ok: true, clicked: true, synthetic: true };
-    }
-    let response = null;
-    try {
-      response = await chrome.runtime.sendMessage({
-        type: "FLOW_TRUSTED_DOUBLE_CLICK",
-        x: rect.left + rect.width / 2,
-        y: rect.top + rect.height / 2
-      });
-    } catch {
-      // A debugger attach can be rejected by Chrome's debugging banner. Keep
-      // the navigation attempt alive with the page's own dblclick handler.
-      response = null;
-    }
-    if (!response?.ok) {
-      dispatchSyntheticDoubleClick(element);
-      response = { ok: true, clicked: true, doubleClicked: true, synthetic: true, fallback: true };
-    }
-    await sleep(Math.max(UI_SETTLE_MS, Number(settleMs || 0)));
-    return response;
   }
 
   async function submitWithTrustedEnter(element) {
@@ -1348,34 +1311,6 @@
     return tile?.querySelector?.("img.character-tile-thumbnail, img[alt*='캐릭터'], img") || null;
   }
 
-  function characterTileOpenTarget(tile) {
-    return tile?.querySelector?.("flow-character-tile .character-tile-container")
-      || tile?.querySelector?.(".character-tile-container")
-      || tile?.querySelector?.("flow-character-tile")
-      || tile;
-  }
-
-  function findLatestUnnamedCharacterTile(baselineMedia = null) {
-    const unnamedLabels = new Set([
-      normalizedCharacterTileLabel("제목 없는 캐릭터"),
-      normalizedCharacterTileLabel("Untitled character")
-    ]);
-    const candidates = Array.from(document.querySelectorAll("flow-grid-tile-container"))
-      .filter((tile) => visible(tile) && characterTileLabels(tile).some((label) => unnamedLabels.has(normalizedCharacterTileLabel(label))));
-    if (!candidates.length) return null;
-
-    // Flow inserts the newest project card first. Prefer a thumbnail that was
-    // not present in the pre-generation media boundary when one is available.
-    if (baselineMedia instanceof Set && baselineMedia.size) {
-      const fresh = candidates.find((tile) => {
-        const image = characterTileThumbnail(tile);
-        return image && !baselineMedia.has(mediaFingerprint(image, 0));
-      });
-      if (fresh) return fresh;
-    }
-    return candidates[0];
-  }
-
   function findRegisteredCharacterImage(key) {
     const target = normalize(key).replace(/^@/, "");
     const image = Array.from(document.querySelectorAll("img")).find((image) => {
@@ -1590,6 +1525,21 @@
     control.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
+  function formControlText(control) {
+    if (control instanceof HTMLInputElement || control instanceof HTMLTextAreaElement) return String(control.value || "").trim();
+    return normalizedEditorText(control);
+  }
+
+  function findCharacterNameEditButton() {
+    if (!currentCharacterDetailUrl()) return null;
+    return Array.from(document.querySelectorAll("button")).find((button) => {
+      if (!visible(button)) return false;
+      const descriptor = `${button.getAttribute("aria-label") || ""} ${button.getAttribute("title") || ""} ${button.textContent || ""}`;
+      return /edit\s*name|이름\s*(?:수정|편집)/i.test(descriptor)
+        || normalize(button.querySelector("mat-icon")?.textContent) === "edit";
+    }) || null;
+  }
+
   function findExactActionButton(labels) {
     const targets = labels.map(normalize);
     return Array.from(document.querySelectorAll("button")).find((button) => {
@@ -1599,17 +1549,17 @@
   }
 
   function findCharacterRegistrationSurface() {
-    if (!/\/character\/[^/?#]+(?:\/|$)/i.test(location.pathname)) return null;
+    if (!currentCharacterDetailUrl()) return null;
     const nameControl = findCharacterNameControl();
+    const editButton = findCharacterNameEditButton();
     const doneButton = findExactActionButton(["완료", "Done"]);
-    return nameControl && doneButton ? { nameControl, doneButton } : null;
+    return (nameControl || editButton) && doneButton ? { nameControl, editButton, doneButton } : null;
   }
 
   async function finishCharacterRegistration(character, baselineMedia, timeoutMs) {
     const startedAt = Date.now();
     let lastProgressSentAt = 0;
     let continueClicked = false;
-    let unnamedTileOpened = false;
     let detectedImages = 0;
 
     while (Date.now() - startedAt < timeoutMs) {
@@ -1630,43 +1580,27 @@
         };
       }
 
-      // The character creator can finish by returning to the project library
-      // without exposing a large image on the creator surface. The library
-      // card is the authoritative hand-off to Flow's name editor, so do not
-      // gate this transition on image-pixel detection.
-      const generationSettled = detectedImages > 0 || !hasBusySignal();
-      if (!unnamedTileOpened && isDirectFlowProjectWorkspace() && generationSettled) {
-        const unnamedTile = findLatestUnnamedCharacterTile(baselineMedia);
-        if (unnamedTile) {
-          unnamedTileOpened = true;
-          const tileTarget = characterTileOpenTarget(unnamedTile);
-          emit({
-            type: "FLOW_CHARACTER_PROGRESS",
-            characterId: character.id,
-            phase: "generating",
-            stage: "제목 없는 캐릭터 카드 열기 · 이름 등록 준비",
-            progress: 90,
-            detectedImages
+      let nameControl = findCharacterNameControl();
+      if (!nameControl && currentCharacterDetailUrl()) {
+        const editButton = findCharacterNameEditButton();
+        if (editButton) {
+          await clickTrusted(editButton, { settleMs: 400 });
+          nameControl = await waitFor(findCharacterNameControl, {
+            timeoutMs: 5_000,
+            intervalMs: 100,
+            error: "Flow 캐릭터 이름 편집란을 열지 못했습니다."
           });
-          try {
-            await doubleClickTrusted(tileTarget, { settleMs: NAVIGATION_SETTLE_MS });
-            await waitFor(findCharacterRegistrationSurface, {
-              timeoutMs: 20_000,
-              intervalMs: 250,
-              error: "생성된 제목 없는 캐릭터의 상세 화면을 열지 못했습니다."
-            });
-            continue;
-          } catch {
-            // The card can still be rendering while the project list settles.
-            // Allow the next poll to locate and open it again.
-            unnamedTileOpened = false;
-          }
         }
       }
-
-      const nameControl = findCharacterNameControl();
       if (nameControl) {
-        await setFormControlValue(nameControl, character.key);
+        if (normalize(formControlText(nameControl)) !== normalize(character.key)) {
+          await setFormControlValue(nameControl, character.key);
+          await waitFor(() => normalize(formControlText(nameControl)) === normalize(character.key), {
+            timeoutMs: 3_000,
+            intervalMs: 100,
+            error: `Flow 캐릭터 이름 입력란에 '${character.key}'이 반영되지 않았습니다.`
+          });
+        }
         const doneButton = await waitFor(() => {
           const button = findExactActionButton(["완료", "Done"]);
           return button && !button.disabled && button.getAttribute("aria-disabled") !== "true" ? button : null;
@@ -1674,9 +1608,14 @@
           timeoutMs: 15_000,
           error: `캐릭터 이름 '${character.key}'을 입력했지만 완료 버튼이 활성화되지 않았습니다.`
         });
+        await emitReliable({
+          type: "FLOW_CHARACTER_NAME_SUBMITTED",
+          characterId: character.id,
+          flowDetailUrl: currentCharacterDetailUrl()
+        });
         await clickTrusted(doneButton);
         try {
-          await waitFor(() => !document.contains(nameControl) || !visible(nameControl), {
+          await waitFor(() => isDirectFlowProjectWorkspace() || !document.contains(nameControl) || !visible(nameControl), {
             timeoutMs: 20_000,
             error: "캐릭터 저장 완료 화면으로 전환되지 않았습니다."
           });
@@ -1743,7 +1682,7 @@
       const creatorInput = findCharacterCreatorInput();
       const idleCreator = creatorInput && !characterEditorHasUserText(creatorInput) && !hasBusySignal();
       const characterLibrary = findNewCharacterButton() && !hasBusySignal();
-      if (!existingAsset && (idleCreator || characterLibrary)) {
+      if (!existingAsset && !character.nameSubmittedAt && (idleCreator || characterLibrary)) {
         emit({
           type: "FLOW_CHARACTER_PAUSED",
           characterId: character.id,
@@ -2366,7 +2305,15 @@
   emit({
     type: "FLOW_READY",
     pageSessionId,
+    url: location.href,
     generationFailureCount: initialFailureCards.length,
     generationFailureMessage: generationFailureMessage(initialFailureCards)
   });
+
+  let lastReportedFlowUrl = location.href;
+  setInterval(() => {
+    if (location.href === lastReportedFlowUrl) return;
+    lastReportedFlowUrl = location.href;
+    emit({ type: "FLOW_ROUTE_CHANGED", pageSessionId, url: location.href });
+  }, 200);
 })();

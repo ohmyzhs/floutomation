@@ -33,6 +33,7 @@ import { requireArchiveResult } from "./lib/archive-result.js";
 import {
   PROJECT_HISTORY_KEY,
   buildProjectCharacterProfile,
+  characterDetailFromFlowUrl,
   findProjectCharacterProfile,
   FLOW_TAB_URL_PATTERNS,
   isFlowUrl,
@@ -488,37 +489,6 @@ async function clickTrustedPoint(tabId, x, y) {
   });
 }
 
-async function doubleClickTrustedPoint(tabId, x, y) {
-  if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0) {
-    throw new Error("더블클릭할 Flow 화면 좌표가 올바르지 않습니다.");
-  }
-  return withFlowDebugger(tabId, async (target) => {
-    const point = { x: Math.round(x), y: Math.round(y) };
-    await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
-      type: "mouseMoved",
-      ...point
-    });
-    for (const clickCount of [1, 2]) {
-      await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
-        type: "mousePressed",
-        ...point,
-        button: "left",
-        buttons: 1,
-        clickCount
-      });
-      await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
-        type: "mouseReleased",
-        ...point,
-        button: "left",
-        buttons: 0,
-        clickCount
-      });
-      if (clickCount === 1) await new Promise((resolve) => setTimeout(resolve, 80));
-    }
-    return { clicked: true, doubleClicked: true, ...point };
-  });
-}
-
 function getTaskCollection(state, taskType) {
   return taskType === "character" ? state.characters : state.jobs;
 }
@@ -839,7 +809,10 @@ function characterMessagePayload(character) {
     key: character.key,
     displayName: character.displayName,
     description: character.description,
-    prompt: character.prompt
+    prompt: character.prompt,
+    flowCharacterId: String(character.flowCharacterId || ""),
+    flowDetailUrl: String(character.flowDetailUrl || ""),
+    nameSubmittedAt: character.nameSubmittedAt || null
   };
 }
 
@@ -983,6 +956,16 @@ async function reconcileActiveCharacter(tabId, state) {
   const character = state.characters.find((entry) => entry.id === state.activeJobId);
   if (!character) return;
   try {
+    const tab = await chrome.tabs.get(tabId);
+    const currentDetail = characterDetailFromFlowUrl(tab.url);
+    const storedDetail = characterDetailFromFlowUrl(character.flowDetailUrl);
+    if (storedDetail
+      && storedDetail.projectId === state.flowProjectId
+      && currentDetail?.characterId !== storedDetail.characterId
+      && !character.nameSubmittedAt) {
+      await chrome.tabs.update(tabId, { url: storedDetail.url });
+      return;
+    }
     const response = await sendToTab(tabId, {
       type: "RECONCILE_FLOW_CHARACTER",
       character: characterMessagePayload(character),
@@ -996,6 +979,45 @@ async function reconcileActiveCharacter(tabId, state) {
       "character"
     );
   }
+}
+
+async function captureActiveCharacterDetailRoute(tabId, value) {
+  const detail = characterDetailFromFlowUrl(value);
+  if (!detail || !Number.isInteger(tabId)) return null;
+  const current = await readState();
+  if (current.activeTaskType !== "character" || !current.activeJobId) return null;
+  if (current.tabId != null && current.tabId !== tabId) return null;
+  if (current.flowProjectId && current.flowProjectId !== detail.projectId) return null;
+  let captured = false;
+  const state = await updateState((draft) => {
+    if (draft.activeTaskType !== "character" || !draft.activeJobId) return;
+    if (draft.tabId != null && draft.tabId !== tabId) return;
+    if (draft.flowProjectId && draft.flowProjectId !== detail.projectId) return;
+    const character = draft.characters.find((entry) => entry.id === draft.activeJobId);
+    if (!character || character.status === "completed") return;
+    character.flowCharacterId = detail.characterId;
+    character.flowDetailUrl = detail.url;
+    if (!character.nameSubmittedAt) character.stage = "Flow 캐릭터 상세 URL 확인 · 이름 저장 중";
+    character.progress = Math.max(35, Number(character.progress || 0));
+    character.lastHeartbeatAt = Date.now();
+    draft.tabId = tabId;
+    draft.flowConnected = true;
+    captured = true;
+  });
+  return captured ? state : null;
+}
+
+async function restoreActiveCharacterDetailRoute(tabId, value) {
+  const projectId = projectIdFromFlowUrl(value);
+  if (!Number.isInteger(tabId) || !projectId || characterDetailFromFlowUrl(value)) return false;
+  const state = await readState();
+  if (state.activeTaskType !== "character" || !state.activeJobId || state.flowProjectId !== projectId) return false;
+  if (state.tabId != null && state.tabId !== tabId) return false;
+  const character = state.characters.find((entry) => entry.id === state.activeJobId);
+  const storedDetail = characterDetailFromFlowUrl(character?.flowDetailUrl);
+  if (!storedDetail || storedDetail.projectId !== projectId || character.nameSubmittedAt) return false;
+  await chrome.tabs.update(tabId, { url: storedDetail.url });
+  return true;
 }
 
 async function reconcileActiveScene(tabId, state, deliveryAttempt = 0) {
@@ -1240,20 +1262,25 @@ async function handleFlowEvent(message, sender) {
     return clickTrustedPoint(tabId, Number(message.x), Number(message.y));
   }
 
-  if (message.type === "FLOW_TRUSTED_DOUBLE_CLICK") {
-    if (!tabId || !isFlowUrl(sender.url || sender.tab?.url)) {
-      throw new Error("Google Flow 콘텐츠에서 보낸 더블클릭 요청만 허용됩니다.");
-    }
-    return doubleClickTrustedPoint(tabId, Number(message.x), Number(message.y));
-  }
-
   if (message.type === "FLOW_READY") {
     let shouldReconcileCharacter = false;
     let shouldReconcileScene = false;
+    const readyDetail = characterDetailFromFlowUrl(message.url || sender.url || sender.tab?.url);
     const state = await updateState((state) => {
       const sessionChanged = state.pageSessionId && state.pageSessionId !== message.pageSessionId;
       const active = state.activeJobId ? findTask(state, state.activeJobId) : null;
-      if (sessionChanged && active && ["configuring", "generating"].includes(active.status)) {
+      const activeTabMatches = !active || state.tabId == null || state.tabId === tabId;
+      if (readyDetail
+        && active
+        && activeTabMatches
+        && state.activeTaskType === "character"
+        && (!state.flowProjectId || state.flowProjectId === readyDetail.projectId)) {
+        active.flowCharacterId = readyDetail.characterId;
+        active.flowDetailUrl = readyDetail.url;
+        if (!active.nameSubmittedAt) active.stage = "Flow 캐릭터 상세 URL 확인 · 이름 저장 중";
+        active.progress = Math.max(35, Number(active.progress || 0));
+      }
+      if ((sessionChanged || readyDetail) && active && activeTabMatches && ["configuring", "generating"].includes(active.status)) {
         if (state.activeTaskType === "character") {
           active.status = "generating";
           active.stage = "Flow 화면 전환 · 등록 상태 복구 중";
@@ -1285,13 +1312,23 @@ async function handleFlowEvent(message, sender) {
           state.lastError = `${message.generationFailureMessage} 결과 이미지가 없던 최근 ${rolledBack.length}개 완료 작업을 재생성 대기로 되돌렸습니다.`;
         }
       }
-      state.tabId = tabId;
-      state.pageSessionId = message.pageSessionId;
-      state.flowConnected = true;
+      if (activeTabMatches) {
+        state.tabId = tabId;
+        state.pageSessionId = message.pageSessionId;
+        state.flowConnected = true;
+      }
     });
     if (shouldReconcileCharacter && tabId) void reconcileActiveCharacter(tabId, state);
     if (shouldReconcileScene && tabId) void reconcileActiveScene(tabId, state);
     return state;
+  }
+
+  if (message.type === "FLOW_ROUTE_CHANGED") {
+    const url = String(message.url || sender.url || sender.tab?.url || "");
+    const captured = await captureActiveCharacterDetailRoute(tabId, url);
+    if (captured) return captured;
+    await restoreActiveCharacterDetailRoute(tabId, url);
+    return readState();
   }
 
   if (message.type === "FLOW_JOB_PROGRESS") {
@@ -1351,6 +1388,25 @@ async function handleFlowEvent(message, sender) {
       character.progress = Math.max(character.progress, Math.min(96, Number(message.progress || 0)));
       character.detectedImages = Math.max(Number(character.detectedImages || 0), Number(message.detectedImages || 0));
       if (message.submissionDiagnostic) character.submissionDiagnostic = String(message.submissionDiagnostic);
+      character.lastHeartbeatAt = Date.now();
+      state.flowConnected = true;
+      state.tabId = tabId;
+    });
+  }
+
+  if (message.type === "FLOW_CHARACTER_NAME_SUBMITTED") {
+    const detail = characterDetailFromFlowUrl(message.flowDetailUrl || sender.url || sender.tab?.url);
+    return updateState((state) => {
+      if (state.activeJobId !== message.characterId || state.activeTaskType !== "character") return;
+      const character = state.characters.find((entry) => entry.id === message.characterId);
+      if (!character || character.status === "completed") return;
+      if (detail && (!state.flowProjectId || state.flowProjectId === detail.projectId)) {
+        character.flowCharacterId = detail.characterId;
+        character.flowDetailUrl = detail.url;
+      }
+      character.nameSubmittedAt = Date.now();
+      character.stage = `@${character.key} 이름 입력 · Flow 저장 확인 중`;
+      character.progress = Math.max(92, Number(character.progress || 0));
       character.lastHeartbeatAt = Date.now();
       state.flowConnected = true;
       state.tabId = tabId;
@@ -2176,6 +2232,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     .then((result) => sendResponse({ ok: true, result }))
     .catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
   return true;
+});
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (!changeInfo.url || !isFlowUrl(changeInfo.url)) return;
+  if (characterDetailFromFlowUrl(changeInfo.url)) {
+    void captureActiveCharacterDetailRoute(tabId, changeInfo.url);
+  } else {
+    void restoreActiveCharacterDetailRoute(tabId, changeInfo.url);
+  }
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {

@@ -3,11 +3,32 @@ import test from "node:test";
 
 import {
   buildProjectCharacterProfile,
+  characterDetailFromFlowUrl,
   findProjectCharacterProfile,
   isFlowUrl,
   projectIdFromFlowUrl,
   upsertProjectCharacterProfile
 } from "../lib/project-history.js";
+
+test("Flow character detail URLs expose stable project and character IDs", () => {
+  assert.deepEqual(
+    characterDetailFromFlowUrl("https://flow.google.com/project/project-a/character/character-b?source=test"),
+    {
+      projectId: "project-a",
+      characterId: "character-b",
+      url: "https://flow.google.com/project/project-a/character/character-b"
+    }
+  );
+  assert.deepEqual(
+    characterDetailFromFlowUrl("https://labs.google/fx/ko/tools/flow/project/project-a/character/character-b/"),
+    {
+      projectId: "project-a",
+      characterId: "character-b",
+      url: "https://labs.google/fx/ko/tools/flow/project/project-a/character/character-b"
+    }
+  );
+  assert.equal(characterDetailFromFlowUrl("https://flow.google.com/project/project-a/character"), null);
+});
 
 test("Flow project IDs are extracted from legacy and direct project URLs", () => {
   assert.equal(

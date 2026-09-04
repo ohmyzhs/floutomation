@@ -48,6 +48,18 @@ test("background rejects character completion without verified Flow name evidenc
   assert.match(backgroundSource, /이름 저장을 확인하지 못해 완료 처리하지 않았습니다/);
 });
 
+test("background captures and restores the generated character detail URL", () => {
+  assert.match(backgroundSource, /chrome\.tabs\.onUpdated\.addListener/);
+  assert.match(backgroundSource, /FLOW_ROUTE_CHANGED/);
+  assert.match(backgroundSource, /captureActiveCharacterDetailRoute/);
+  assert.match(backgroundSource, /restoreActiveCharacterDetailRoute/);
+  assert.match(backgroundSource, /character\.flowCharacterId = detail\.characterId/);
+  assert.match(backgroundSource, /character\.flowDetailUrl = detail\.url/);
+  assert.match(backgroundSource, /chrome\.tabs\.update\(tabId, \{ url: storedDetail\.url \}\)/);
+  assert.match(backgroundSource, /FLOW_CHARACTER_NAME_SUBMITTED/);
+  assert.doesNotMatch(backgroundSource, /FLOW_TRUSTED_DOUBLE_CLICK/);
+});
+
 test("Flow sync repairs automatic character completions that are absent from named cards", () => {
   assert.match(backgroundSource, /automaticCompletion/);
   assert.match(backgroundSource, /Flow 이름 미확인 · 다시 생성 대기/);
