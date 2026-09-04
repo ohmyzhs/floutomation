@@ -101,7 +101,7 @@ test("the general image prompt cannot be mistaken for the character description 
 test("direct Flow project navigation uses its interactive list items without clicking back to the homepage", () => {
   assert.match(directNavigationSource, /mat-list-item/);
   assert.match(directNavigationSource, /function isDirectFlowProjectWorkspace/);
-  assert.match(directNavigationSource, /isDirectFlowProject &&/);
+  assert.match(directNavigationSource, /if \(!isDirectFlowProject\) return null/);
   assert.match(directNavigationSource, /location\.pathname/);
   assert.match(directNavigationSource, /findDirectProjectNavigationItem\("전체 미디어"\)/);
   assert.match(characterNavigationSource, /findDirectProjectNavigationItem\("캐릭터"\)/);
@@ -147,6 +147,10 @@ test("character registration uses the captured detail route instead of reopening
 });
 
 test("character completion requires the saved name card after returning from details", () => {
+  assert.match(contentSource, /function characterLinkMatchesKey/);
+  assert.match(contentSource, /link\.querySelector\("img"\)\?\.getAttribute\("alt"\)/);
+  assert.match(contentSource, /image\.closest\('a\[href\*="\/character\/"\]'\)/);
+  assert.match(contentSource, /characterLinkMatchesKey\(link, target\)/);
   assert.match(registrationSource, /findRegisteredCharacterImage\(character\.key\)/);
   assert.match(registrationSource, /registrationVerified: true/);
   assert.match(contentSource, /registrationVerified: result\.registrationVerified === true/);
@@ -216,8 +220,10 @@ test("character generation uses a trusted coordinate click and Enter fallback", 
 });
 
 test("character detail navigation is a start signal and failed retries resume registration", () => {
+  assert.match(contentSource, /FLOW_CHARACTER_DETAIL_PATH = \/\(\?:\^\|\\\/\)project\\\/\[\^\/\]\+\\\/character/);
   assert.match(contentSource, /function findCharacterRegistrationSurface/);
   assert.match(contentSource, /function currentCharacterDetailUrl/);
+  assert.doesNotMatch(directNavigationSource, /return isDirectFlowProject && \/\^\\\/project/);
   assert.match(contentSource, /if \(!currentCharacterDetailUrl\(\)\) return null/);
   assert.match(contentSource, /const nameControl = findCharacterNameControl\(\)/);
   assert.match(contentSource, /const editButton = findCharacterNameEditButton\(nameControl\)/);
@@ -225,7 +231,7 @@ test("character detail navigation is a start signal and failed retries resume re
   assert.match(contentSource, /function findCharacterCompletionButton/);
   assert.match(submissionSource, /additionalStartSignal = null/);
   assert.match(submissionSource, /if \(additionalStartSignal\?\.\(\)\) return true/);
-  assert.match(contentSource, /additionalStartSignal: findCharacterRegistrationSurface/);
+  assert.match(contentSource, /additionalStartSignal: currentCharacterDetailUrl/);
   assert.match(contentSource, /if \(findCharacterRegistrationSurface\(\)\)/);
   assert.match(contentSource, /생성된 캐릭터 상세 화면 복구 · 이름 저장 중/);
   assert.match(registrationSource, /setFormControlValue\(nameControl, character\.key\)/);
@@ -271,7 +277,7 @@ test("Flow ready events report the exact route for URL-based character recovery"
   assert.match(contentSource, /url: location\.href/);
   assert.match(contentSource, /type: "FLOW_ROUTE_CHANGED"/);
   assert.match(contentSource, /setInterval/);
-  assert.ok(contentSource.includes('/^\\/project\\/[^/]+\\/character\\/[^/?#]+\\/?$/i'));
+  assert.ok(contentSource.includes('/(?:^|\\/)project\\/[^/]+\\/character\\/[^/?#]+\\/?$/i'));
 });
 
 test("Flow character discovery reads named custom-element tiles and real ProseMirror text", () => {

@@ -1,6 +1,8 @@
 (() => {
   const LEGACY_FLOW_PATH = /^\/fx\/(?:[^/]+\/)?tools\/flow(?:\/|$)/i;
   const DIRECT_FLOW_PATH = /^\/project\/[^/]+(?:\/|$)/i;
+  const FLOW_PROJECT_WORKSPACE_PATH = /(?:^|\/)project\/[^/]+\/?$/i;
+  const FLOW_CHARACTER_DETAIL_PATH = /(?:^|\/)project\/[^/]+\/character\/[^/?#]+\/?$/i;
   const DIRECT_FLOW_HOSTS = new Set(["flow.google", "flow.google.com", "fow.google"]);
   const isDirectFlowProject = DIRECT_FLOW_HOSTS.has(location.hostname)
     && DIRECT_FLOW_PATH.test(location.pathname);
@@ -115,11 +117,11 @@
   }
 
   function isDirectFlowProjectWorkspace() {
-    return isDirectFlowProject && /^\/project\/[^/]+\/?$/i.test(location.pathname);
+    return FLOW_PROJECT_WORKSPACE_PATH.test(location.pathname);
   }
 
   function currentCharacterDetailUrl() {
-    return isDirectFlowProject && /^\/project\/[^/]+\/character\/[^/?#]+\/?$/i.test(location.pathname)
+    return FLOW_CHARACTER_DETAIL_PATH.test(location.pathname)
       ? `${location.origin}${location.pathname.replace(/\/+$/, "")}`
       : "";
   }
@@ -1468,6 +1470,17 @@
     return tile?.querySelector?.("img.character-tile-thumbnail, img[alt*='캐릭터'], img") || null;
   }
 
+  function characterLinkMatchesKey(link, key) {
+    if (!(link instanceof HTMLElement)) return false;
+    const target = normalizedCharacterTileLabel(key);
+    const labels = [
+      link.getAttribute("aria-label"),
+      link.querySelector(".character-tile-name")?.textContent,
+      link.querySelector("img")?.getAttribute("alt")
+    ];
+    return labels.some((label) => normalizedCharacterTileLabel(label) === target);
+  }
+
   function findRegisteredCharacterImage(key) {
     const target = normalize(key).replace(/^@/, "");
     const image = Array.from(document.querySelectorAll("img")).find((image) => {
@@ -1478,6 +1491,8 @@
         || image.naturalWidth >= 80 && image.naturalHeight >= 80
         || document.visibilityState === "hidden";
       if (label !== target || !hasImageSize) return false;
+      const link = image.closest('a[href*="/character/"]');
+      if (link && characterLinkMatchesKey(link, target)) return true;
       const tile = image.closest("flow-grid-tile-container, flow-character-tile");
       if (tile) return characterTileMatchesKey(tile, target);
       return /\/character\/[^/?#]+(?:\/|$)/i.test(location.pathname);
@@ -1495,8 +1510,7 @@
       if (!visible(link)) return false;
       const tile = link.querySelector("flow-grid-tile-container, flow-character-tile");
       if (tile) return characterTileMatchesKey(tile, target);
-      const labels = [link.getAttribute("aria-label"), link.querySelector(".character-tile-name")?.textContent];
-      return labels.some((label) => normalizedCharacterTileLabel(label) === target);
+      return characterLinkMatchesKey(link, target);
     }) || null;
   }
 
@@ -2092,7 +2106,10 @@
         baselineFailureCount,
         findSubmitControl: findCharacterSubmitButton,
         retrySubmit: submitWithTrustedEnter,
-        additionalStartSignal: findCharacterRegistrationSurface,
+        // The reference agent treats navigation to /character/<id> as the
+        // authoritative acceptance signal. This also works on the legacy
+        // labs.google prefix before the detail form finishes rendering.
+        additionalStartSignal: currentCharacterDetailUrl,
         failureMessage: "Flow 캐릭터 만들기 버튼을 실제 좌표로 클릭한 뒤 키보드 Enter까지 재시도했지만 생성 신호를 확인하지 못했습니다.",
         onRetry: async (currentButton) => emitReliable({
           type: "FLOW_CHARACTER_PROGRESS",
