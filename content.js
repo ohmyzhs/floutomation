@@ -1128,7 +1128,7 @@
       if (!visible(control)) return false;
       const text = String(control.textContent || "").replace(/\s+/g, "").toLowerCase();
       const label = String(control.getAttribute("aria-label") || "").replace(/\s+/g, "").toLowerCase();
-      return text.includes("arrow_back") || /뒤로|back/.test(label);
+      return text.includes("arrow_back") || /뒤로|돌아가기|이전페이지|back/.test(label);
     }) || null;
   }
 
@@ -1514,7 +1514,16 @@
       return;
     }
     await clickTrusted(control, { settleMs: 200 });
-    await insertTrustedText(control, value, { clear: true });
+    const prototype = control instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
+    if (setter) setter.call(control, "");
+    else control.value = "";
+    control.dispatchEvent(new InputEvent("input", {
+      bubbles: true,
+      inputType: "deleteContentBackward",
+      data: null
+    }));
+    await insertTrustedText(control, value);
   }
 
   function formControlText(control) {
@@ -1541,6 +1550,18 @@
     return Array.from(document.querySelectorAll("button")).find((button) => {
       if (!visible(button)) return false;
       return targets.includes(normalize(button.textContent));
+    }) || null;
+  }
+
+  function findCharacterCompletionButton() {
+    if (!currentCharacterDetailUrl()) return null;
+    const exact = findExactActionButton(["완료", "Done"]);
+    if (exact) return exact;
+    return Array.from(document.querySelectorAll("button")).find((button) => {
+      if (!visible(button)) return false;
+      const label = normalize(`${button.getAttribute("aria-label") || ""} ${button.getAttribute("title") || ""}`);
+      const icon = normalize(button.querySelector("mat-icon")?.textContent || "");
+      return /수정완료|finishediting|save(?:name)?/.test(label) || icon === "check";
     }) || null;
   }
 
@@ -1606,12 +1627,18 @@
           characterId: character.id,
           flowDetailUrl: currentCharacterDetailUrl()
         });
-        const backButton = await waitFor(findFlowBackButton, {
-          timeoutMs: 5_000,
-          intervalMs: 100,
-          error: `캐릭터 이름 '${character.key}'을 입력했지만 돌아가기 버튼을 찾지 못했습니다.`
-        });
-        await clickTrusted(backButton, { settleMs: NAVIGATION_SETTLE_MS });
+        const completionButton = findCharacterCompletionButton();
+        if (completionButton) {
+          await clickTrusted(completionButton, { settleMs: NAVIGATION_SETTLE_MS });
+        }
+        if (currentCharacterDetailUrl()) {
+          const backButton = await waitFor(findFlowBackButton, {
+            timeoutMs: 5_000,
+            intervalMs: 100,
+            error: `캐릭터 이름 '${character.key}'을 입력했지만 완료 또는 돌아가기 버튼을 찾지 못했습니다.`
+          });
+          await clickTrusted(backButton, { settleMs: NAVIGATION_SETTLE_MS });
+        }
         try {
           await waitFor(() => !currentCharacterDetailUrl(), {
             timeoutMs: 20_000,
