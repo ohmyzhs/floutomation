@@ -66,6 +66,22 @@
     throw new Error(error);
   }
 
+  async function dismissBlockingFlowAnnouncement() {
+    const dialog = Array.from(document.querySelectorAll('[role="dialog"]'))
+      .find((element) => element instanceof HTMLElement && visible(element));
+    if (!dialog) return false;
+    const button = Array.from(dialog.querySelectorAll("button")).find((candidate) => {
+      if (!visible(candidate)) return false;
+      const label = String(candidate.textContent || candidate.getAttribute("aria-label") || "")
+        .replace(/\s+/g, " ")
+        .trim();
+      return /^(?:시작하기|Get started)$/i.test(label);
+    });
+    if (!button) return false;
+    await clickTrusted(button, { settleMs: 700 });
+    return true;
+  }
+
   function findPromptInput() {
     return Array.from(document.querySelectorAll('[contenteditable="true"], [role="textbox"]'))
       .filter((element) => element instanceof HTMLElement && visible(element))
@@ -145,11 +161,13 @@
   function findDirectSettingsButton(input = null) {
     const isSettingsButton = (button) => {
       if (!visible(button)) return false;
-      const descriptor = String(button.textContent || button.getAttribute("aria-label") || "")
+      const descriptor = `${button.textContent || ""} ${button.getAttribute("aria-label") || ""} ${button.getAttribute("title") || ""}`
         .replace(/\s+/g, "")
         .toLowerCase();
-      return /(?:banana|imagen|veo)/i.test(descriptor)
-        && /(?:crop_|16:9|4:3|1:1|3:4|9:16|x[1-4])/.test(descriptor);
+      if (/설정트리거|settingstrigger|promptsettings/.test(descriptor)) return true;
+      const hasGenerationSummary = /(?:banana|imagen|veo|omni|이미지|동영상|image|video)/i.test(descriptor);
+      const hasSettingValue = /(?:crop_|16:9|4:3|1:1|3:4|9:16|360p|720p|\d+초|\d+s|x[1-4])/.test(descriptor);
+      return hasGenerationSummary && hasSettingValue;
     };
 
     let node = input?.parentElement || null;
@@ -176,15 +194,31 @@
     }) || null;
   }
 
+  function settingControlSelected(control) {
+    if (!(control instanceof HTMLElement)) return false;
+    if (control.getAttribute("aria-selected") === "true" || control.getAttribute("aria-checked") === "true") return true;
+    if (["active", "checked", "selected", "on"].includes(String(control.getAttribute("data-state") || "").toLowerCase())) return true;
+    return [control, control.parentElement].some((element) => element instanceof HTMLElement
+      && /(?:^|\s)(?:mat-button-toggle-checked|active|selected)(?:\s|$)/i.test(element.className));
+  }
+
+  function findSettingsControl(section, label, matcher) {
+    if (!(section instanceof HTMLElement)) return null;
+    return Array.from(section.querySelectorAll('[role="tab"], [role="radio"], button'))
+      .find((control) => visible(control) && matcher(normalize(control.textContent), normalize(label))) || null;
+  }
+
   async function selectSettingsTab(section, label, matcher) {
-    const target = Array.from(section.querySelectorAll('[role="tab"]'))
-      .find((tab) => visible(tab) && matcher(normalize(tab.textContent), normalize(label)));
+    const target = findSettingsControl(section, label, matcher);
     if (!target) throw new Error(`Flow 설정에서 ${label} 옵션을 찾지 못했습니다.`);
-    const selected = target.getAttribute("aria-selected") === "true" || target.getAttribute("data-state") === "active";
-    if (!selected) {
+    if (!settingControlSelected(target)) {
       await clickTrusted(target);
       await waitFor(
-        () => target.getAttribute("aria-selected") === "true" || target.getAttribute("data-state") === "active",
+        () => {
+          const currentSection = findDirectSettingsMenu();
+          const currentTarget = currentSection ? findSettingsControl(currentSection, label, matcher) : null;
+          return settingControlSelected(currentTarget);
+        },
         { error: `${label} 설정이 선택되지 않았습니다.` }
       );
     }
@@ -215,12 +249,15 @@
   }
 
   function findDirectSettingsMenu() {
-    return Array.from(document.querySelectorAll('[role="menu"]')).find((menu) => {
+    const candidates = Array.from(document.querySelectorAll(
+      'flow-prompt-box-settings, .settings-content-overlay, .settings-content, [role="menu"]'
+    ));
+    return candidates.find((menu) => {
       if (!(menu instanceof HTMLElement) || !visible(menu)) return false;
-      const tabs = Array.from(menu.querySelectorAll('[role="tab"]')).filter(visible);
-      const hasImageTab = tabs.some((tab) => /이미지|image/.test(normalize(tab.textContent)));
-      const hasRatio = tabs.some((tab) => SUPPORTED_FLOW_ASPECT_RATIOS.some((ratio) => normalize(tab.textContent).endsWith(normalize(ratio))));
-      const hasCount = tabs.some((tab) => /^x[1-4]$/.test(normalize(tab.textContent)));
+      const controls = Array.from(menu.querySelectorAll('[role="tab"], [role="radio"], button')).filter(visible);
+      const hasImageTab = controls.some((control) => /이미지|image/.test(normalize(control.textContent)));
+      const hasRatio = controls.some((control) => SUPPORTED_FLOW_ASPECT_RATIOS.some((ratio) => normalize(control.textContent).endsWith(normalize(ratio))));
+      const hasCount = controls.some((control) => /^x[1-4]$/.test(normalize(control.textContent)));
       return hasImageTab && hasRatio && hasCount;
     }) || null;
   }
@@ -254,6 +291,19 @@
     return Number.isFinite(requested) ? Math.min(4, Math.max(1, Math.round(requested))) : 2;
   }
 
+  function settingsSummaryHasAspectRatio(summary, aspectRatio) {
+    const compact = String(summary || "").replace(/\s+/g, "").toLowerCase();
+    const iconByRatio = {
+      "16:9": "crop_16_9",
+      "4:3": "crop_landscape",
+      "1:1": "crop_square",
+      "3:4": "crop_portrait",
+      "9:16": "crop_9_16"
+    };
+    return compact.includes(String(aspectRatio || "").toLowerCase())
+      || compact.includes(iconByRatio[aspectRatio] || "__unsupported_ratio__");
+  }
+
   async function ensureDirectImageSettings(input, requestedModel, requestedAspectRatio, requestedImagesPerPrompt) {
     const aspectRatio = requestedFlowAspectRatio(requestedAspectRatio);
     const imagesPerPrompt = requestedFlowImageCount(requestedImagesPerPrompt);
@@ -262,17 +312,31 @@
       intervalMs: 200,
       error: "Flow 모든 미디어의 일반 이미지 설정 버튼을 찾지 못했습니다. 에이전트 모드가 꺼져 있는지 확인해 주세요."
     });
-    await clickTrusted(settingsButton, { settleMs: 600 });
-    const section = await waitFor(findDirectSettingsMenu, {
+    if (!findDirectSettingsMenu()) await clickTrusted(settingsButton, { settleMs: 600 });
+    let section = await waitFor(findDirectSettingsMenu, {
       timeoutMs: 8_000,
       intervalMs: 100,
       error: "Flow 일반 이미지 설정 메뉴를 열지 못했습니다."
     });
 
     await selectSettingsTab(section, "이미지", (value, target) => value.endsWith(target) || value === "image");
+    section = await waitFor(findDirectSettingsMenu, { error: "이미지 모드 전환 후 Flow 설정 메뉴가 사라졌습니다." });
     await selectSettingsTab(section, aspectRatio, (value, target) => value.endsWith(target));
+    section = await waitFor(findDirectSettingsMenu, { error: "가로세로 비율 선택 후 Flow 설정 메뉴가 사라졌습니다." });
     await selectSettingsTab(section, `x${imagesPerPrompt}`, (value, target) => value === target || value === `${imagesPerPrompt}x`);
+    section = await waitFor(findDirectSettingsMenu, { error: "출력 수 선택 후 Flow 설정 메뉴가 사라졌습니다." });
     await ensureDirectImageModel(section, requestedModel);
+
+    await waitFor(() => {
+      const summary = String(findDirectSettingsButton(input)?.textContent || "");
+      return isExactFlowModel(summary, requestedModel)
+        && settingsSummaryHasAspectRatio(summary, aspectRatio)
+        && normalize(summary).includes(`x${imagesPerPrompt}`);
+    }, {
+      timeoutMs: 8_000,
+      intervalMs: 100,
+      error: "Flow 생성 설정이 이미지 모드로 반영되지 않았습니다."
+    });
 
     if (findDirectSettingsMenu() && document.contains(settingsButton)) {
       await clickTrusted(settingsButton, { settleMs: 600 });
@@ -380,8 +444,16 @@
   }
 
   function findAssetPickerDialog() {
-    return Array.from(document.querySelectorAll('[role="dialog"]')).find((dialog) => {
-      if (!(dialog instanceof HTMLElement) || !visible(dialog)) return false;
+    const searchInputs = Array.from(document.querySelectorAll('input, [role="textbox"]')).filter((control) => {
+      if (!(control instanceof HTMLElement) || !visible(control)) return false;
+      const descriptor = `${control.getAttribute("aria-label") || ""} ${control.getAttribute("placeholder") || ""}`;
+      return /애셋\s*검색|search\s*assets?/i.test(descriptor);
+    });
+    for (const searchInput of searchInputs) {
+      const dialog = searchInput.closest(
+        'flow-add-menu-popover-content, .add-menu-popover-container, [role="dialog"]'
+      );
+      if (!(dialog instanceof HTMLElement) || !visible(dialog)) continue;
       const search = Array.from(dialog.querySelectorAll('input, [role="textbox"]')).find((control) => {
         const descriptor = `${control.getAttribute("aria-label") || ""} ${control.getAttribute("placeholder") || ""}`;
         return /애셋\s*검색|search\s*assets?/i.test(descriptor);
@@ -390,8 +462,9 @@
         const text = String(button.textContent || button.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim();
         return /^(?:프롬프트에 추가|add to prompt)$/i.test(text);
       });
-      return Boolean(search && addButton);
-    }) || null;
+      if (search && addButton) return dialog;
+    }
+    return null;
   }
 
   function findAssetSearchInput(dialog = findAssetPickerDialog()) {
@@ -436,7 +509,7 @@
     return waitFor(() => {
       const currentDialog = findAssetPickerDialog();
       const currentFilter = currentDialog ? findCharacterAssetFilter(currentDialog) : null;
-      return currentDialog && currentFilter && navigationItemSelected(currentFilter) && findAssetSearchInput(currentDialog)
+      return currentDialog && currentFilter && settingControlSelected(currentFilter) && findAssetSearchInput(currentDialog)
         ? currentDialog
         : null;
     }, {
@@ -488,7 +561,7 @@
       const matches = Array.from(node.querySelectorAll("button")).filter((button) => {
         if (!visible(button)) return false;
         const descriptor = accessibleDescriptor(button);
-        return /캐릭터\s*참고\s*이미지|character\s*reference\s*image/i.test(descriptor);
+        return /캐릭터\s*(?:참고|참조|소재)\s*이미지|character\s*(?:reference|asset)\s*image/i.test(descriptor);
       });
       if (matches.length) return matches;
     }
@@ -531,11 +604,27 @@
 
   async function bindCharacterAssetReference(input, key) {
     const beforeReferenceCount = findCharacterReferenceControls(input).length;
-    await pressTrustedAtSign(input);
+    const assetButton = await waitFor(() => {
+      let node = input?.parentElement || null;
+      for (let depth = 0; node && depth < 7; depth += 1, node = node.parentElement) {
+        const button = Array.from(node.querySelectorAll("button")).find((candidate) => {
+          if (!visible(candidate)) return false;
+          const descriptor = accessibleDescriptor(candidate).replace(/\s+/g, "").toLowerCase();
+          return /프롬프트상자에소재추가|add(?:media|asset)to(?:the)?prompt/.test(descriptor);
+        });
+        if (button) return button;
+      }
+      return null;
+    }, {
+      timeoutMs: 5_000,
+      intervalMs: 100,
+      error: `@${key} 캐릭터를 연결할 Flow 소재 추가 버튼을 찾지 못했습니다.`
+    });
+    await clickTrusted(assetButton, { settleMs: 500 });
     let dialog = await waitFor(findAssetPickerDialog, {
       timeoutMs: 8_000,
       intervalMs: 100,
-      error: `@${key} 입력 후 Flow 애셋 선택창이 열리지 않았습니다.`
+      error: `@${key} 연결을 위한 Flow 애셋 선택창이 열리지 않았습니다.`
     });
     dialog = await selectCharacterAssetFilter(dialog);
     const searchInput = await waitFor(() => findAssetSearchInput(dialog), {
@@ -710,6 +799,8 @@
   }
 
   function mediaFingerprint(element, index) {
+    const mediaId = String(element.getAttribute?.("data-media-id") || "").trim();
+    if (mediaId) return `asset:${mediaId}`;
     const detailUrl = element.closest?.('a[href*="/edit/"]')?.href || "";
     const assetId = assetIdFromDetailUrl(detailUrl);
     if (assetId) return `asset:${assetId}`;
@@ -729,7 +820,7 @@
       return {
         url,
         detailUrl,
-        assetId: assetIdFromDetailUrl(detailUrl)
+        assetId: String(element.getAttribute("data-media-id") || "").trim() || assetIdFromDetailUrl(detailUrl)
       };
     }
     const style = element.getAttribute("style") || "";
@@ -830,10 +921,13 @@
     for (const item of percentageNodes) {
       let node = item.element.parentElement;
       for (let depth = 0; node && depth < 6; depth += 1, node = node.parentElement) {
-        const hasImageIcon = Array.from(node.querySelectorAll("i, span")).some((element) => {
+        const hasImageIcon = Array.from(node.querySelectorAll("i, span, mat-icon, [data-mat-icon-type='font']")).some((element) => {
           if (!(element instanceof HTMLElement) || !visible(element) || element.children.length > 0) return false;
           return String(element.textContent || "").trim().toLowerCase() === "image"
-            && (element.tagName === "I" || element.classList.contains("google-symbols"));
+            && (element.tagName === "I"
+              || element.tagName === "MAT-ICON"
+              || element.classList.contains("google-symbols")
+              || element.getAttribute("data-mat-icon-type") === "font");
         });
         if (!hasImageIcon) continue;
 
@@ -860,6 +954,7 @@
 
   function hasBusySignal(progressCards = null) {
     if ((progressCards || findGenerationProgressCards()).length > 0) return true;
+    if (Array.from(document.querySelectorAll("flow-pending-tile")).some(visible)) return true;
     if (Array.from(document.querySelectorAll('[aria-busy="true"], [role="progressbar"]')).some(visible)) return true;
     return Array.from(document.querySelectorAll('button, [role="status"]')).some((element) => {
       if (!visible(element)) return false;
@@ -1141,10 +1236,12 @@
   }
 
   async function enterCharacterCreator() {
+    await dismissBlockingFlowAnnouncement();
     const alreadyOpen = characterCreatorControls();
     if (alreadyOpen) return alreadyOpen;
 
     for (let attempt = 0; attempt < 5; attempt += 1) {
+      await dismissBlockingFlowAnnouncement();
       const creatorInput = findCharacterCreatorInput();
       if (creatorInput) {
         return waitFor(characterCreatorControls, {
@@ -1193,6 +1290,7 @@
 
   async function enterDirectMediaWorkspace() {
     for (let attempt = 0; attempt < 5; attempt += 1) {
+      await dismissBlockingFlowAnnouncement();
       const allMediaButton = findAllMediaNavigationButton();
       if (allMediaButton) {
         if (!navigationItemSelected(allMediaButton)) {
@@ -1429,6 +1527,7 @@
   }
 
   async function scanFlowCharacters(characterKeys) {
+    await dismissBlockingFlowAnnouncement();
     const keys = Array.from(new Set((characterKeys || []).map(String).filter(Boolean)));
     if (hasBusySignal()) {
       return { ready: true, inProgress: true, surface: detectFlowSurface(), registeredKeys: [] };
@@ -1514,16 +1613,12 @@
       return;
     }
     await clickTrusted(control, { settleMs: 200 });
-    const prototype = control instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-    const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
-    if (setter) setter.call(control, "");
-    else control.value = "";
-    control.dispatchEvent(new InputEvent("input", {
-      bubbles: true,
-      inputType: "deleteContentBackward",
-      data: null
-    }));
-    await insertTrustedText(control, value);
+    // Flow's Angular form can restore its previous value after a synthetic
+    // native setter. Clear with a real Cmd+A + Backspace in the focused input
+    // so "제목 없는 캐릭터" is replaced instead of receiving an appended name.
+    await insertTrustedText(control, value, { clear: true });
+    control.dispatchEvent(new Event("change", { bubbles: true }));
+    await sleep(350);
   }
 
   function formControlText(control) {
@@ -1598,11 +1693,14 @@
       }
 
       let nameControl = findCharacterNameControl();
+      const characterImageReady = currentCharacterDetailUrl()
+        && detectedImages > 0
+        && !hasBusySignal();
       const nameControlNeedsEditing = !nameControl
         || nameControl.hasAttribute("readonly")
         || nameControl.hasAttribute("disabled")
         || nameControl.getAttribute("aria-readonly") === "true";
-      if (currentCharacterDetailUrl() && nameControlNeedsEditing) {
+      if (characterImageReady && nameControlNeedsEditing) {
         const editButton = findCharacterNameEditButton(nameControl);
         if (editButton) {
           await clickTrusted(editButton, { settleMs: 250 });
@@ -1613,7 +1711,7 @@
           });
         }
       }
-      if (nameControl) {
+      if (nameControl && characterImageReady) {
         if (normalize(formControlText(nameControl)) !== normalize(character.key)) {
           await setFormControlValue(nameControl, character.key);
           await waitFor(() => normalize(formControlText(nameControl)) === normalize(character.key), {
@@ -1675,17 +1773,17 @@
         continueClicked = true;
       }
 
-      if (detectedImages > 0 && Date.now() - startedAt >= 120_000) {
-        return { completed: false, referenceImages: detectedImages, assets: [] };
-      }
-
       if (Date.now() - lastProgressSentAt >= 5_000) {
         const elapsed = Date.now() - startedAt;
         emit({
           type: "FLOW_CHARACTER_PROGRESS",
           characterId: character.id,
           phase: "generating",
-          stage: detectedImages > 0 ? `참조 이미지 ${detectedImages}장 생성 · 등록 화면 확인 중` : "캐릭터 참조 이미지 생성 중",
+          stage: detectedImages > 0
+            ? (hasBusySignal()
+              ? `참조 이미지 ${detectedImages}장 생성 마무리 대기 중`
+              : `참조 이미지 ${detectedImages}장 생성 · 등록 화면 확인 중`)
+            : "캐릭터 참조 이미지 생성 중",
           progress: Math.min(88, 24 + Math.round((elapsed / timeoutMs) * 64)),
           detectedImages
         });
@@ -2117,16 +2215,23 @@
   }
 
   function sceneMediaCardAssets() {
-    return Array.from(document.querySelectorAll('a[href*="/edit/"]'))
-      .map((link) => {
-        const image = link.querySelector("img");
+    const seen = new Set();
+    return Array.from(document.querySelectorAll(
+      'flow-image-tile img[data-media-id], a[href*="/edit/"] img'
+    ))
+      .map((image) => {
+        const link = image.closest?.('a[href*="/edit/"]');
         const rawUrl = String(image?.currentSrc || image?.src || "").trim();
         const url = rawUrl.replace(/([?&])mediaUrlType=[^&]+&?/i, (_whole, prefix) => prefix === "?" ? "" : "&").replace(/[?&]$/, "");
         if (!/^https:\/\//i.test(url)) return null;
+        const assetId = String(image.getAttribute("data-media-id") || "").trim() || assetIdFromDetailUrl(link?.href);
+        const identity = assetId || String(link?.href || "") || url;
+        if (seen.has(identity)) return null;
+        seen.add(identity);
         return {
           url,
-          detailUrl: String(link.href || ""),
-          assetId: assetIdFromDetailUrl(link.href),
+          detailUrl: String(link?.href || ""),
+          assetId,
           width: Number(image?.naturalWidth || 0),
           height: Number(image?.naturalHeight || 0)
         };
@@ -2135,7 +2240,7 @@
   }
 
   function findMediaScrollContainer() {
-    const firstCard = document.querySelector('a[href*="/edit/"]');
+    const firstCard = document.querySelector('flow-image-tile img[data-media-id], a[href*="/edit/"]');
     for (let node = firstCard?.parentElement; node; node = node.parentElement) {
       if (!(node instanceof HTMLElement)) continue;
       const style = getComputedStyle(node);
@@ -2144,14 +2249,14 @@
     return Array.from(document.querySelectorAll("body *"))
       .filter((element) => element instanceof HTMLElement
         && element.scrollHeight > element.clientHeight + 200
-        && element.querySelector('a[href*="/edit/"]'))
+        && element.querySelector('flow-image-tile img[data-media-id], a[href*="/edit/"]'))
       .sort((left, right) => right.scrollHeight - left.scrollHeight)[0]
       || document.scrollingElement;
   }
 
   async function scanAllSceneMediaAssets() {
     await enterDirectMediaWorkspace();
-    await waitFor(() => document.querySelector('a[href*="/edit/"]'), {
+    await waitFor(() => document.querySelector('flow-image-tile img[data-media-id], a[href*="/edit/"]'), {
       timeoutMs: 20_000,
       intervalMs: 250,
       error: "Flow 모든 미디어에서 다운로드할 이미지 카드를 찾지 못했습니다."
@@ -2172,7 +2277,8 @@
 
       for (let pass = 0; pass < 140; pass += 1) {
         for (const asset of sceneMediaCardAssets()) {
-          if (!found.has(asset.detailUrl || asset.url)) found.set(asset.detailUrl || asset.url, asset);
+          const identity = asset.assetId || asset.detailUrl || asset.url;
+          if (!found.has(identity)) found.set(identity, asset);
         }
         stagnantPasses = found.size === previousSize ? stagnantPasses + 1 : 0;
         previousSize = found.size;

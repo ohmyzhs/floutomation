@@ -1,4 +1,5 @@
 import { createStoredZip } from "./lib/zip-archive.js";
+import { detectImageExtension, replaceImageExtension } from "./lib/image-format.js";
 
 const archiveUrls = new Map();
 const FETCH_TIMEOUT_MS = 30_000;
@@ -39,7 +40,10 @@ async function fetchOriginalOnce(entry) {
     }
     const bytes = new Uint8Array(await response.arrayBuffer());
     if (!bytes.length) throw new Error("원본 이미지가 비어 있습니다.");
-    return bytes;
+    return {
+      bytes,
+      extension: detectImageExtension(response.headers.get("content-type"), bytes)
+    };
   } finally {
     clearTimeout(timeout);
   }
@@ -77,15 +81,16 @@ async function buildArchive(entries) {
       const entry = entries[index];
       progress(completed, entries.length, `${entry.filename.split("/").pop()} 원본 수집 중`);
       try {
+        const original = await fetchOriginal(entry, (attempt, error) => {
+          progress(
+            completed,
+            entries.length,
+            `${entry.filename.split("/").pop()} 재시도 ${attempt}/${FETCH_ATTEMPTS} · ${String(error?.message || error)}`
+          );
+        });
         files[index] = {
-          filename: entry.filename,
-          bytes: await fetchOriginal(entry, (attempt, error) => {
-            progress(
-              completed,
-              entries.length,
-              `${entry.filename.split("/").pop()} 재시도 ${attempt}/${FETCH_ATTEMPTS} · ${String(error?.message || error)}`
-            );
-          })
+          filename: replaceImageExtension(entry.filename, original.extension),
+          bytes: original.bytes
         };
       } catch (error) {
         failure = new Error(`${entry.filename.split("/").pop()} 수집 실패: ${String(error?.message || error)}`);

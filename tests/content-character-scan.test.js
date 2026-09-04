@@ -72,6 +72,18 @@ const discoveryStart = contentSource.indexOf("function discoverRegisteredCharact
 const discoveryEnd = contentSource.indexOf("async function setFormControlValue", discoveryStart);
 const discoverySource = contentSource.slice(discoveryStart, discoveryEnd);
 
+const progressStart = contentSource.indexOf("function findGenerationProgressCards");
+const progressEnd = contentSource.indexOf("function captureCompletionSignals", progressStart);
+const progressSource = contentSource.slice(progressStart, progressEnd);
+
+const assetPickerStart = contentSource.indexOf("function findAssetPickerDialog");
+const assetPickerEnd = contentSource.indexOf("async function setPromptWithCharacterReferences", assetPickerStart);
+const assetPickerSource = contentSource.slice(assetPickerStart, assetPickerEnd);
+
+const mediaCardsStart = contentSource.indexOf("function sceneMediaCardAssets");
+const mediaCardsEnd = contentSource.indexOf("function findMediaScrollContainer", mediaCardsStart);
+const mediaCardsSource = contentSource.slice(mediaCardsStart, mediaCardsEnd);
+
 test("content script stays active on direct Flow project URLs", () => {
   assert.match(contentGuardSource, /DIRECT_FLOW_HOSTS.*flow\.google\.com/);
   assert.match(contentGuardSource, /DIRECT_FLOW_PATH/);
@@ -109,6 +121,14 @@ test("the selected model is matched exactly across all three Flow image models",
   assert.match(modelSelectionSource, /ensureDirectImageModel\(section, requestedModel\)/);
   assert.match(contentSource, /ensureCharacterModel\(options\.model\)/);
   assert.match(contentSource, /ensureDirectImageSettings\(input, options\.model, options\.aspectRatio, options\.imagesPerPrompt\)/);
+});
+
+test("current Flow settings use the trigger summary and radio controls", () => {
+  assert.ok(contentSource.includes("설정트리거|settingstrigger|promptsettings"));
+  assert.match(modelSelectionSource, /\[role="tab"\], \[role="radio"\], button/);
+  assert.match(modelSelectionSource, /flow-prompt-box-settings/);
+  assert.match(contentSource, /aria-checked/);
+  assert.match(modelSelectionSource, /crop_16_9/);
 });
 
 test("character registration monitoring responds to a requested stop", () => {
@@ -220,9 +240,9 @@ test("Flow character detail names are edited and persisted before completion", (
   assert.match(contentSource, /수정완료\|finishediting\|save\(\?:name\)\?/);
   assert.match(contentSource, /뒤로\|돌아가기\|이전페이지\|back/);
   assert.match(contentSource, /edit\\s\*name\|이름\\s\*\(\?:수정\|편집\)/);
-  assert.match(contentSource, /setter\.call\(control, ""\)/);
-  assert.match(contentSource, /inputType: "deleteContentBackward"/);
-  assert.match(contentSource, /await insertTrustedText\(control, value\)/);
+  assert.match(contentSource, /await insertTrustedText\(control, value, \{ clear: true \}\)/);
+  assert.match(contentSource, /control\.dispatchEvent\(new Event\("change"/);
+  assert.doesNotMatch(contentSource, /setter\.call\(control, ""\)/);
   assert.match(registrationSource, /setFormControlValue\(nameControl, character\.key\)/);
   assert.match(registrationSource, /FLOW_CHARACTER_NAME_SUBMITTED/);
   assert.match(registrationSource, /flowDetailUrl: currentCharacterDetailUrl\(\)/);
@@ -249,6 +269,34 @@ test("Flow character discovery reads named custom-element tiles and real ProseMi
   assert.match(contentSource, /\.ProseMirror/);
   assert.match(contentSource, /prosemirror-placeholder/);
   assert.match(contentSource, /characterTileMatchesKey/);
+});
+
+test("current Flow pending tiles prevent early character or scene completion", () => {
+  assert.match(progressSource, /flow-pending-tile/);
+  assert.match(progressSource, /mat-icon/);
+  assert.match(progressSource, /data-mat-icon-type/);
+  assert.ok(progressSource.includes('.match(/^(100|\\d{1,2})\\s*%$/)'));
+});
+
+test("current Flow asset popover opens from the prompt asset button and accepts character chips", () => {
+  assert.match(assetPickerSource, /flow-add-menu-popover-content/);
+  assert.match(assetPickerSource, /add-menu-popover-container/);
+  assert.ok(assetPickerSource.includes("애셋\\s*검색|search\\s*assets?"));
+  assert.match(assetPickerSource, /프롬프트상자에소재추가/);
+  assert.ok(assetPickerSource.includes("캐릭터\\s*(?:참고|참조|소재)"));
+});
+
+test("current Flow image cards are scanned by stable data-media-id without edit links", () => {
+  assert.match(mediaCardsSource, /flow-image-tile img\[data-media-id\]/);
+  assert.match(mediaCardsSource, /getAttribute\("data-media-id"\)/);
+  assert.match(mediaCardsSource, /const identity = assetId/);
+});
+
+test("one-time Flow release notes cannot block queue navigation", () => {
+  assert.match(contentSource, /function dismissBlockingFlowAnnouncement/);
+  assert.match(contentSource, /\[role="dialog"\]/);
+  assert.match(contentSource, /시작하기\|Get started/);
+  assert.match(contentSource, /await dismissBlockingFlowAnnouncement\(\)/);
 });
 
 test("hidden Flow pages can use structural controls without viewport geometry", () => {
