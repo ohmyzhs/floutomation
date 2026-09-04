@@ -120,13 +120,13 @@ test("character registration monitoring responds to a requested stop", () => {
 
 test("character registration uses the captured detail route instead of reopening an unnamed card", () => {
   assert.match(registrationSource, /currentCharacterDetailUrl\(\)/);
-  assert.match(registrationSource, /findCharacterNameEditButton\(\)/);
+  assert.match(registrationSource, /findCharacterNameEditButton\(nameControl\)/);
   assert.doesNotMatch(contentSource, /FLOW_TRUSTED_DOUBLE_CLICK/);
   assert.doesNotMatch(contentSource, /dispatchSyntheticDoubleClick/);
   assert.doesNotMatch(registrationSource, /제목 없는 캐릭터 카드 열기/);
 });
 
-test("character completion requires the saved name card after clicking Done", () => {
+test("character completion requires the saved name card after returning from details", () => {
   assert.match(registrationSource, /findRegisteredCharacterImage\(character\.key\)/);
   assert.match(registrationSource, /registrationVerified: true/);
   assert.match(contentSource, /registrationVerified: result\.registrationVerified === true/);
@@ -200,8 +200,8 @@ test("character detail navigation is a start signal and failed retries resume re
   assert.match(contentSource, /function currentCharacterDetailUrl/);
   assert.match(contentSource, /if \(!currentCharacterDetailUrl\(\)\) return null/);
   assert.match(contentSource, /const nameControl = findCharacterNameControl\(\)/);
-  assert.match(contentSource, /const editButton = findCharacterNameEditButton\(\)/);
-  assert.match(contentSource, /findExactActionButton\(\["완료", "Done"\]\)/);
+  assert.match(contentSource, /const editButton = findCharacterNameEditButton\(nameControl\)/);
+  assert.match(contentSource, /const backButton = findFlowBackButton\(\)/);
   assert.match(submissionSource, /additionalStartSignal = null/);
   assert.match(submissionSource, /if \(additionalStartSignal\?\.\(\)\) return true/);
   assert.match(contentSource, /additionalStartSignal: findCharacterRegistrationSurface/);
@@ -211,14 +211,19 @@ test("character detail navigation is a start signal and failed retries resume re
 });
 
 test("Flow character detail names are edited and persisted before completion", () => {
+  assert.match(contentSource, /form\.character-form input\.name-input\[type="text"\]/);
+  assert.match(registrationSource, /const nameControlNeedsEditing = !nameControl/);
   assert.match(contentSource, /function findCharacterNameEditButton/);
   assert.match(contentSource, /edit\\s\*name\|이름\\s\*\(\?:수정\|편집\)/);
+  assert.match(contentSource, /await insertTrustedText\(control, value, \{ clear: true \}\)/);
   assert.match(registrationSource, /setFormControlValue\(nameControl, character\.key\)/);
   assert.match(registrationSource, /FLOW_CHARACTER_NAME_SUBMITTED/);
   assert.match(registrationSource, /flowDetailUrl: currentCharacterDetailUrl\(\)/);
-  assert.match(registrationSource, /await clickTrusted\(doneButton\)/);
+  assert.match(registrationSource, /await clickTrusted\(backButton, \{ settleMs: NAVIGATION_SETTLE_MS \}\)/);
+  assert.match(registrationSource, /await waitFor\(\(\) => !currentCharacterDetailUrl\(\)/);
+  assert.doesNotMatch(registrationSource, /findExactActionButton\(\["완료", "Done"\]\)/);
   assert.match(registrationSource, /registrationVerified: true/);
-  assert.match(registrationSource, /isDirectFlowProjectWorkspace\(\) && findRegisteredCharacterImage\(character\.key\)/);
+  assert.match(registrationSource, /findRegisteredCharacterImage\(character\.key\)/);
 });
 
 test("Flow ready events report the exact route for URL-based character recovery", () => {

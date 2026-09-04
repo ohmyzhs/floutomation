@@ -1,4 +1,4 @@
-# Flow Batch Studio <small>v0.9.17</small>
+# Flow Batch Studio <small>v0.9.18</small>
 
 Google Flow에서 캐릭터·장면·인트로·썸네일 이미지 작업을 순서대로 실행하고, 결과를 프로젝트별 ZIP 파일로 저장하는 Chrome 확장 프로그램입니다.
 
@@ -814,4 +814,4 @@ npm run check
 1. `background.js`, `content.js`, `sidepanel.js`, `offscreen.js` 문법 검사
 2. Node 내장 테스트 러너로 전체 회귀 테스트 실행
 
-현재 버전은 `0.9.17`이며, 확장 프로그램 배포 전 `manifest.json`, `package.json`, `package-lock.json`의 버전을 함께 확인해야 합니다.
+현재 버전은 `0.9.18`이며, 확장 프로그램 배포 전 `manifest.json`, `package.json`, `package-lock.json`의 버전을 함께 확인해야 합니다.

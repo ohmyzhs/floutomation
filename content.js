@@ -1267,6 +1267,13 @@
   }
 
   function findCharacterNameControl() {
+    const exactNameControl = Array.from(document.querySelectorAll(
+      'form.character-form input.name-input[type="text"], input.name-input[type="text"][aria-label]'
+    )).find((control) => control instanceof HTMLInputElement
+      && visible(control)
+      && /캐릭터\s*이름|character\s*name/i.test(controlDescriptor(control)));
+    if (exactNameControl) return exactNameControl;
+
     const controls = Array.from(document.querySelectorAll('input:not([type="hidden"]), textarea, [contenteditable="true"]'))
       .filter((element) => element instanceof HTMLElement && visible(element));
     const named = controls.find((control) => /캐릭터\s*이름|character\s*name|(?:^|\s)(?:이름|name)(?:\s|$)/i.test(controlDescriptor(control)));
@@ -1506,12 +1513,8 @@
       await setPrompt(control, value);
       return;
     }
-    const prototype = control instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-    const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
-    if (setter) setter.call(control, value);
-    else control.value = value;
-    control.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
-    control.dispatchEvent(new Event("change", { bubbles: true }));
+    await clickTrusted(control, { settleMs: 200 });
+    await insertTrustedText(control, value, { clear: true });
   }
 
   function formControlText(control) {
@@ -1519,9 +1522,13 @@
     return normalizedEditorText(control);
   }
 
-  function findCharacterNameEditButton() {
+  function findCharacterNameEditButton(nameControl = findCharacterNameControl()) {
     if (!currentCharacterDetailUrl()) return null;
-    return Array.from(document.querySelectorAll("button")).find((button) => {
+    const localForm = nameControl?.closest?.("form.character-form");
+    const buttons = localForm
+      ? [...localForm.querySelectorAll("button"), ...document.querySelectorAll("button")]
+      : Array.from(document.querySelectorAll("button"));
+    return buttons.find((button) => {
       if (!visible(button)) return false;
       const descriptor = `${button.getAttribute("aria-label") || ""} ${button.getAttribute("title") || ""} ${button.textContent || ""}`;
       return /edit\s*name|이름\s*(?:수정|편집)/i.test(descriptor)
@@ -1540,9 +1547,9 @@
   function findCharacterRegistrationSurface() {
     if (!currentCharacterDetailUrl()) return null;
     const nameControl = findCharacterNameControl();
-    const editButton = findCharacterNameEditButton();
-    const doneButton = findExactActionButton(["완료", "Done"]);
-    return (nameControl || editButton) && doneButton ? { nameControl, editButton, doneButton } : null;
+    const editButton = findCharacterNameEditButton(nameControl);
+    const backButton = findFlowBackButton();
+    return (nameControl || editButton) && backButton ? { nameControl, editButton, backButton } : null;
   }
 
   async function finishCharacterRegistration(character, baselineMedia, timeoutMs) {
@@ -1560,7 +1567,7 @@
 
       const currentMedia = captureLargeMedia();
       detectedImages = Array.from(currentMedia).filter((item) => !baselineMedia.has(item)).length;
-      if (findRegisteredCharacterImage(character.key)) {
+      if (!currentCharacterDetailUrl() && findRegisteredCharacterImage(character.key)) {
         return {
           completed: true,
           registrationVerified: true,
@@ -1570,10 +1577,14 @@
       }
 
       let nameControl = findCharacterNameControl();
-      if (!nameControl && currentCharacterDetailUrl()) {
-        const editButton = findCharacterNameEditButton();
+      const nameControlNeedsEditing = !nameControl
+        || nameControl.hasAttribute("readonly")
+        || nameControl.hasAttribute("disabled")
+        || nameControl.getAttribute("aria-readonly") === "true";
+      if (currentCharacterDetailUrl() && nameControlNeedsEditing) {
+        const editButton = findCharacterNameEditButton(nameControl);
         if (editButton) {
-          await clickTrusted(editButton, { settleMs: 400 });
+          await clickTrusted(editButton, { settleMs: 250 });
           nameControl = await waitFor(findCharacterNameControl, {
             timeoutMs: 5_000,
             intervalMs: 100,
@@ -1590,26 +1601,24 @@
             error: `Flow 캐릭터 이름 입력란에 '${character.key}'이 반영되지 않았습니다.`
           });
         }
-        const doneButton = await waitFor(() => {
-          const button = findExactActionButton(["완료", "Done"]);
-          return button && !button.disabled && button.getAttribute("aria-disabled") !== "true" ? button : null;
-        }, {
-          timeoutMs: 15_000,
-          error: `캐릭터 이름 '${character.key}'을 입력했지만 완료 버튼이 활성화되지 않았습니다.`
-        });
         await emitReliable({
           type: "FLOW_CHARACTER_NAME_SUBMITTED",
           characterId: character.id,
           flowDetailUrl: currentCharacterDetailUrl()
         });
-        await clickTrusted(doneButton);
+        const backButton = await waitFor(findFlowBackButton, {
+          timeoutMs: 5_000,
+          intervalMs: 100,
+          error: `캐릭터 이름 '${character.key}'을 입력했지만 돌아가기 버튼을 찾지 못했습니다.`
+        });
+        await clickTrusted(backButton, { settleMs: NAVIGATION_SETTLE_MS });
         try {
-          await waitFor(() => isDirectFlowProjectWorkspace() || !document.contains(nameControl) || !visible(nameControl), {
+          await waitFor(() => !currentCharacterDetailUrl(), {
             timeoutMs: 20_000,
-            error: "캐릭터 저장 완료 화면으로 전환되지 않았습니다."
+            error: "캐릭터 이름을 입력한 뒤 목록 화면으로 돌아오지 못했습니다."
           });
           const registeredMatch = await waitFor(
-            () => isDirectFlowProjectWorkspace() && findRegisteredCharacterImage(character.key),
+            () => findRegisteredCharacterImage(character.key),
             {
               timeoutMs: 20_000,
               intervalMs: 300,
