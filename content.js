@@ -384,7 +384,7 @@
       throw new Error("Flow 입력란이 화면에서 사라졌습니다.");
     }
     placeTextSelection(input, { selectAll: clear });
-    const response = await chrome.runtime.sendMessage({
+    const response = await sendRuntimeMessage({
       type: "FLOW_TRUSTED_TYPE",
       text: String(text || ""),
       clear: Boolean(clear)
@@ -399,8 +399,8 @@
     if (!(input instanceof HTMLElement) || !document.contains(input)) {
       throw new Error("Flow 입력란이 화면에서 사라졌습니다.");
     }
-    placeCaretAtEnd(input);
-    const response = await chrome.runtime.sendMessage({
+    placeTextSelection(input);
+    const response = await sendRuntimeMessage({
       type: "FLOW_TRUSTED_KEY",
       key: "@"
     });
@@ -422,7 +422,7 @@
       await sleep(Math.max(UI_SETTLE_MS, Number(settleMs || 0)));
       return { ok: true, clicked: true, synthetic: true };
     }
-    const response = await chrome.runtime.sendMessage({
+    const response = await sendRuntimeMessage({
       type: "FLOW_TRUSTED_CLICK",
       x: rect.left + rect.width / 2,
       y: rect.top + rect.height / 2
@@ -438,7 +438,7 @@
       throw new Error("전송할 Flow 버튼이 사라졌습니다.");
     }
     element.focus({ preventScroll: true });
-    const response = await chrome.runtime.sendMessage({ type: "FLOW_TRUSTED_SUBMIT" });
+    const response = await sendRuntimeMessage({ type: "FLOW_TRUSTED_SUBMIT" });
     if (!response?.ok) {
       throw new Error(response?.error || "Flow 전송 키 입력을 전달하지 못했습니다.");
     }
@@ -622,29 +622,18 @@
 
   async function bindCharacterAssetReference(input, key) {
     const beforeReferenceCount = findCharacterReferenceControls(input).length;
-    const assetButton = await waitFor(() => {
-      let node = input?.parentElement || null;
-      for (let depth = 0; node && depth < 7; depth += 1, node = node.parentElement) {
-        const button = Array.from(node.querySelectorAll("button")).find((candidate) => {
-          if (!visible(candidate)) return false;
-          const descriptor = accessibleDescriptor(candidate).replace(/\s+/g, "").toLowerCase();
-          return /프롬프트상자에소재추가|add(?:media|asset)to(?:the)?prompt/.test(descriptor);
-        });
-        if (button) return button;
-      }
-      return null;
-    }, {
-      timeoutMs: 5_000,
-      intervalMs: 100,
-      error: `@${key} 캐릭터를 연결할 Flow 소재 추가 버튼을 찾지 못했습니다.`
-    });
-    await clickTrusted(assetButton, { settleMs: 500 });
+    // Flow's '@' shortcut opens the character-aware picker. Opening the generic
+    // asset menu instead can add only an image chip, without a usable character anchor.
+    await pressTrustedAtSign(input);
     let dialog = await waitFor(findAssetPickerDialog, {
       timeoutMs: 8_000,
       intervalMs: 100,
       error: `@${key} 연결을 위한 Flow 애셋 선택창이 열리지 않았습니다.`
     });
-    dialog = await selectCharacterAssetFilter(dialog);
+    const activeCharacterFilter = findCharacterAssetFilter(dialog);
+    if (!activeCharacterFilter || !settingControlSelected(activeCharacterFilter)) {
+      dialog = await selectCharacterAssetFilter(dialog);
+    }
     const searchInput = await waitFor(() => findAssetSearchInput(dialog), {
       timeoutMs: 3_000,
       intervalMs: 100,
@@ -680,11 +669,12 @@
     });
     await waitFor(() => {
       const referenceCount = findCharacterReferenceControls(input).length;
-      return referenceCount > beforeReferenceCount;
+      const editorText = normalizedEditorText(input).replace(/\s+/g, "").toLowerCase();
+      return referenceCount > beforeReferenceCount && editorText.includes(normalize(key));
     }, {
       timeoutMs: 5_000,
       intervalMs: 100,
-      error: `@${key}가 실제 캐릭터 참조 칩으로 연결되지 않았습니다.`
+      error: `@${key}가 Flow의 캐릭터 앵커로 연결되지 않았습니다.`
     });
   }
 

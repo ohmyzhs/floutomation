@@ -289,12 +289,12 @@ test("current Flow pending tiles prevent early character or scene completion", (
   assert.ok(progressSource.includes('.match(/^(100|\\d{1,2})\\s*%$/)'));
 });
 
-test("current Flow asset popover opens from the prompt asset button and accepts character chips", () => {
+test("current Flow asset popover can locate the character picker and its add action", () => {
   assert.match(assetPickerSource, /flow-add-menu-popover-content/);
   assert.match(assetPickerSource, /add-menu-popover-container/);
   assert.ok(assetPickerSource.includes("애셋\\s*검색|search\\s*assets?"));
-  assert.match(assetPickerSource, /프롬프트상자에소재추가/);
-  assert.ok(assetPickerSource.includes("캐릭터\\s*(?:참고|참조|소재)"));
+  assert.match(assetPickerSource, /프롬프트에 추가/);
+  assert.match(contentSource, /flow-character-ingredient-chip/);
 });
 
 test("current Flow image cards are scanned by stable data-media-id without edit links", () => {
@@ -350,6 +350,13 @@ test("repeated @character mentions produce one Flow reference chip and keep late
   assert.match(promptReferenceSource, /if \(boundKeys\.has\(key\)\) \{\s*\/\/ A character can be mentioned repeatedly[\s\S]*?await insertTrustedText\(input, key\);/);
   assert.match(promptReferenceSource, /await bindCharacterAssetReference\(input, key\);\s*boundKeys\.add\(key\);/);
   assert.match(promptReferenceSource, /referenceCount >= boundKeys\.size/);
+});
+
+test("character anchors use Flow's @ shortcut instead of the generic asset menu", () => {
+  assert.match(contentSource, /async function pressTrustedAtSign/);
+  assert.match(contentSource, /await pressTrustedAtSign\(input\)/);
+  assert.match(contentSource, /Flow's '@' shortcut opens the character-aware picker/);
+  assert.match(contentSource, /editorText\.includes\(normalize\(key\)\)/);
 });
 
 test("current Flow character ingredient chips count as anchor references", () => {
