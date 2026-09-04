@@ -683,33 +683,33 @@
     const matches = [...prompt.matchAll(/@([A-Za-z][\w-]*)/g)];
     const boundKeys = new Set();
     input = await clearScenePrompt(input);
-    let cursor = 0;
+
+    const plainPrompt = String(prompt || "").replace(/@[A-Za-z][\w-]*/g, "");
+    await insertTrustedText(input, plainPrompt);
+    const expectedBody = plainPrompt.replace(/[\s\u200b]+/g, "");
+    await waitFor(() => normalizedEditorText(input).replace(/[\s\u200b]+/g, "").includes(expectedBody), {
+      timeoutMs: 8_000,
+      intervalMs: 100,
+      error: "캐릭터 앵커를 붙이기 전 장면 프롬프트 본문 전체를 Flow 입력창에 넣지 못했습니다."
+    });
 
     for (const match of matches) {
       const key = match[1];
       if (!expected.has(key)) {
         throw new Error(`정의되지 않은 캐릭터 참조 @${key}가 포함되어 있습니다.`);
       }
-      await insertTrustedText(input, prompt.slice(cursor, match.index));
       if (boundKeys.has(key)) {
-        // A character can be mentioned repeatedly in prose, but Flow only needs one reference chip per character.
-        await insertTrustedText(input, key);
+        continue;
       } else {
         await bindCharacterAssetReference(input, key);
         boundKeys.add(key);
       }
-      cursor = Number(match.index) + match[0].length;
     }
 
-    await insertTrustedText(input, prompt.slice(cursor));
-    const proseSegments = String(prompt || "")
-      .split(/@[A-Za-z][\w-]*/g)
-      .map((segment) => segment.replace(/[\s\u200b]+/g, ""))
-      .filter(Boolean);
     await waitFor(() => {
       const editorText = normalizedEditorText(input).replace(/[\s\u200b]+/g, "");
       const referenceCount = findCharacterReferenceControls(input).length;
-      return referenceCount >= boundKeys.size && proseSegments.every((segment) => editorText.includes(segment));
+      return referenceCount >= boundKeys.size && editorText.includes(expectedBody);
     }, {
       timeoutMs: 8_000,
       intervalMs: 100,

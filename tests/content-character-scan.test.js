@@ -345,9 +345,12 @@ test("returning from an empty creator accepts the project workspace instead of r
   );
 });
 
-test("repeated @character mentions produce one Flow reference chip and keep later mentions as prose", () => {
+test("scene prompt text is committed before unique character anchors are appended", () => {
   assert.match(promptReferenceSource, /const boundKeys = new Set\(\);/);
-  assert.match(promptReferenceSource, /if \(boundKeys\.has\(key\)\) \{\s*\/\/ A character can be mentioned repeatedly[\s\S]*?await insertTrustedText\(input, key\);/);
+  assert.match(promptReferenceSource, /const plainPrompt = String\(prompt \|\| ""\)\.replace/);
+  assert.match(promptReferenceSource, /await insertTrustedText\(input, plainPrompt\)/);
+  assert.match(promptReferenceSource, /캐릭터 앵커를 붙이기 전 장면 프롬프트 본문 전체/);
+  assert.match(promptReferenceSource, /if \(boundKeys\.has\(key\)\) \{\s*continue;/);
   assert.match(promptReferenceSource, /await bindCharacterAssetReference\(input, key\);\s*boundKeys\.add\(key\);/);
   assert.match(promptReferenceSource, /referenceCount >= boundKeys\.size/);
 });
