@@ -2373,6 +2373,23 @@
     }
   }
 
+  async function prepareManualCharacterPrompt(character, options) {
+    activeJobId = character.id;
+    activeTaskType = "manual";
+    pauseRequested = false;
+
+    try {
+      const { input } = await enterCharacterCreator();
+      await ensureCharacterModel(options.model);
+      await setPrompt(input, character.prompt);
+      return { prepared: true };
+    } finally {
+      activeJobId = null;
+      activeTaskType = null;
+      pauseRequested = false;
+    }
+  }
+
   function currentProjectTitle() {
     const editableTitle = Array.from(document.querySelectorAll(
       'input[aria-label="수정 가능한 텍스트"], [contenteditable="true"][aria-label="수정 가능한 텍스트"]'
@@ -2593,6 +2610,17 @@
         return false;
       }
       void prepareManualScenePrompt(message.job, message.options || {})
+        .then((result) => sendResponse({ accepted: true, ...result }))
+        .catch((error) => sendResponse({ accepted: false, error: String(error?.message || error) }));
+      return true;
+    }
+
+    if (message?.type === "PREPARE_MANUAL_CHARACTER_PROMPT") {
+      if (activeJobId) {
+        sendResponse({ accepted: false, error: "Flow 페이지에서 이미 다른 작업을 진행 중입니다." });
+        return false;
+      }
+      void prepareManualCharacterPrompt(message.character, message.options || {})
         .then((result) => sendResponse({ accepted: true, ...result }))
         .catch((error) => sendResponse({ accepted: false, error: String(error?.message || error) }));
       return true;

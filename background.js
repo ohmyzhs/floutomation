@@ -831,6 +831,25 @@ function characterMessagePayload(character) {
   };
 }
 
+// A manual send may carry a prompt the user rewrote in the panel. Treat an
+// empty or unchanged edit as "send what is saved".
+function manualPromptOverride(value, savedPrompt) {
+  const edited = String(value ?? "").trim();
+  if (!edited || edited === String(savedPrompt || "").trim()) return "";
+  return edited;
+}
+
+// Character bindings follow the text, so an edited prompt is re-scanned for
+// the @handles this project actually knows.
+function promptCharacterRefs(prompt, characters) {
+  const known = new Set((characters || []).map((character) => String(character?.key || "")).filter(Boolean));
+  const refs = [];
+  for (const match of String(prompt || "").matchAll(/@([A-Za-z][\w-]*)/g)) {
+    if (known.has(match[1]) && !refs.includes(match[1])) refs.push(match[1]);
+  }
+  return refs;
+}
+
 function sceneMessagePayload(job) {
   return {
     id: job.id,
@@ -1935,12 +1954,16 @@ async function handleUiMessage(message) {
     if (current.characters.some((character) => character.status !== "completed")) {
       throw new Error("수동 프롬프트를 보내기 전에 모든 캐릭터가 Flow에 준비되어야 합니다.");
     }
+    const editedPrompt = manualPromptOverride(message.prompt, job.prompt);
+    const outgoingJob = editedPrompt
+      ? { ...job, prompt: editedPrompt, characterRefs: promptCharacterRefs(editedPrompt, current.characters) }
+      : job;
     const tab = await findFlowTab(current.tabId);
     if (!tab?.id) throw new Error("수동 프롬프트를 보낼 열린 Flow 프로젝트 탭이 없습니다.");
 
     const response = await sendToTab(tab.id, {
       type: "PREPARE_MANUAL_SCENE_PROMPT",
-      job: sceneMessagePayload(job),
+      job: sceneMessagePayload(outgoingJob),
       options: current.options
     });
     if (!response?.accepted || !response?.prepared) {
@@ -1950,6 +1973,10 @@ async function handleUiMessage(message) {
     return updateState((state) => {
       const target = state.jobs.find((entry) => entry.id === jobId);
       if (!target) return;
+      if (editedPrompt) {
+        target.prompt = editedPrompt;
+        target.characterRefs = promptCharacterRefs(editedPrompt, state.characters);
+      }
       target.status = "manual";
       target.stage = "Flow 입력 완료 · 직접 생성 후 완료 처리";
       target.progress = Math.max(20, Number(target.progress || 0));
@@ -2093,6 +2120,54 @@ async function handleUiMessage(message) {
         throw new Error("재시도할 실패 캐릭터를 찾지 못했습니다.");
       }
     });
+  }
+
+  if (message.type === "PREPARE_MANUAL_CHARACTER") {
+    const current = await readState();
+    if (current.activeJobId || ["running", "waiting", "pausing"].includes(current.status)) {
+      throw new Error("자동 큐를 먼저 중단한 뒤 수동 프롬프트를 준비해 주세요.");
+    }
+    const characterId = String(message.characterId || "");
+    const character = current.characters.find((entry) => entry.id === characterId);
+    if (!character) throw new Error("수동으로 준비할 캐릭터를 찾지 못했습니다.");
+    const editedPrompt = manualPromptOverride(message.prompt, character.prompt);
+    const prompt = editedPrompt || String(character.prompt || "");
+    if (!prompt.trim()) throw new Error("이 캐릭터에는 보낼 프롬프트가 없습니다.");
+    const tab = await findFlowTab(current.tabId);
+    if (!tab?.id) throw new Error("수동 프롬프트를 보낼 열린 Flow 프로젝트 탭이 없습니다.");
+
+    const response = await sendToTab(tab.id, {
+      type: "PREPARE_MANUAL_CHARACTER_PROMPT",
+      character: {
+        id: character.id,
+        key: character.key,
+        displayName: character.displayName,
+        description: character.description,
+        prompt
+      },
+      options: current.options
+    });
+    if (!response?.accepted || !response?.prepared) {
+      throw new Error(response?.error || "Flow 캐릭터 생성 화면에 수동 프롬프트를 준비하지 못했습니다.");
+    }
+    await chrome.alarms.clear(QUEUE_ALARM);
+    const nextState = await updateState((state) => {
+      const target = state.characters.find((entry) => entry.id === characterId);
+      if (!target) return;
+      if (editedPrompt) target.prompt = editedPrompt;
+      target.stage = "Flow 캐릭터 화면 입력 완료 · 직접 생성 후 완료 지정";
+      target.error = null;
+      state.status = "paused";
+      state.phase = "characters";
+      state.manualPause = true;
+      state.pauseRequested = false;
+      state.nextRunAt = null;
+      state.tabId = tab.id;
+      state.flowConnected = true;
+      state.lastError = null;
+    });
+    await archiveProjectCharacters(nextState);
+    return nextState;
   }
 
   if (message.type === "CONFIRM_CHARACTER") {

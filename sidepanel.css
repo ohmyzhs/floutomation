@@ -440,3 +440,12 @@ textarea::placeholder { color: #aaa5b0; }
   .panel-card, .status-card { border-radius: 15px; padding: 13px; }
   .connection-pill span:last-child { display: none; }
 }
+
+.manual-prompt-editor { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.manual-prompt-editor.open { padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--purple-soft); }
+.manual-edit-toggle { align-self: flex-start; }
+.manual-prompt-label { color: var(--muted); font-size: 9px; line-height: 1.4; }
+.manual-prompt-input { box-sizing: border-box; width: 100%; min-height: 88px; padding: 7px 8px; border: 1px solid var(--line); border-radius: 7px; color: var(--ink); background: #fff; font: inherit; font-size: 10px; line-height: 1.6; resize: vertical; }
+.manual-prompt-input:focus { outline: 2px solid var(--purple-dark); outline-offset: 1px; }
+.manual-prompt-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.character-manual-actions { margin-top: 8px; }

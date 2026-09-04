@@ -28,6 +28,10 @@ let sourceSaveTimer = null;
 let downloadBusy = false;
 let flowCheckInFlight = false;
 let showUnassignedOnly = false;
+// Which manual prompt editors are expanded, and the text typed into them.
+// Both are keyed "job:<id>" / "character:<id>" and survive a re-render.
+const openPromptEditors = new Set();
+const promptDrafts = new Map();
 let mappingStartAssetKey = "";
 let mappingStartJobId = "";
 let draggingAsset = null;
@@ -251,6 +255,7 @@ function renderJobs() {
             ${job.status === "manual" && canUseManual ? `<button class="job-complete-button" data-complete-manual-job="${escapeHtml(job.id)}" type="button">생성 완료 처리</button>` : ""}
           </div>
         </div>
+        ${canUseManual ? manualPromptEditor({ kind: "job", id: job.id, prompt: job.prompt || "", label: job.title || "장면" }) : ""}
         ${job.status === "pending" && job.lastTransientError
           ? `<p class="job-retry-note">${escapeHtml(job.lastTransientError)}</p>`
           : ""}
@@ -264,6 +269,25 @@ function renderJobs() {
       </article>
     `;
   }).join("");
+}
+
+// A manual send can go out either as saved or as a one-off rewrite. The
+// editor stays collapsed until asked for, so the card keeps its usual size.
+function manualPromptEditor({ kind, id, prompt, label }) {
+  const editorKey = `${kind}:${id}`;
+  const open = openPromptEditors.has(editorKey);
+  const draft = promptDrafts.has(editorKey) ? promptDrafts.get(editorKey) : prompt;
+  return `
+      <div class="manual-prompt-editor${open ? " open" : ""}">
+        <button class="job-action-button manual-edit-toggle" data-edit-prompt="${escapeHtml(editorKey)}" type="button" aria-expanded="${open}">${open ? "수정 취소" : "수정해서 보내기"}</button>
+        ${open ? `
+        <label class="manual-prompt-label" for="manual-prompt-${kind}-${escapeHtml(id)}">${escapeHtml(label)} · 이번 전송에 쓸 프롬프트 (저장된 내용도 함께 갱신됩니다)</label>
+        <textarea class="manual-prompt-input" id="manual-prompt-${kind}-${escapeHtml(id)}" data-prompt-draft="${escapeHtml(editorKey)}" rows="6" spellcheck="false">${escapeHtml(draft)}</textarea>
+        <div class="manual-prompt-actions">
+          <button class="job-action-button manual-prompt-send" data-send-edited="${escapeHtml(editorKey)}" type="button">수정본 보내기</button>
+          <button class="job-action-button manual-prompt-reset" data-reset-prompt="${escapeHtml(editorKey)}" type="button">저장본으로 되돌리기</button>
+        </div>` : ""}
+      </div>`;
 }
 
 function renderCharacters() {
@@ -287,6 +311,7 @@ function renderCharacters() {
     failed: "실패"
   };
 
+  const canUseManualCharacter = !state.activeJobId && !["running", "waiting", "pausing"].includes(state.status);
   elements.characterList.innerHTML = characters.map((character) => `
     <article class="character-item ${escapeHtml(character.status)}">
       <div class="character-row">
@@ -308,6 +333,11 @@ function renderCharacters() {
       ${character.error ? `<p class="job-error">${escapeHtml(character.error)}</p>` : ""}
       ${character.status === "review" ? `<button class="character-review-button" data-confirm-character="${escapeHtml(character.id)}" type="button">Flow에서 @${escapeHtml(character.key)} 저장 완료 — 계속</button>` : ""}
       ${["failed", "review"].includes(character.status) && (!state.activeJobId || character.status === "review") ? `<button class="character-retry-button" data-retry-character="${escapeHtml(character.id)}" type="button">@${escapeHtml(character.key)} 처음부터 다시 생성</button>` : ""}
+      ${canUseManualCharacter ? `
+      <div class="job-action-group character-manual-actions" aria-label="@${escapeHtml(character.key)} 수동 작업">
+        <button class="job-action-button job-manual-button" data-prepare-manual-character="${escapeHtml(character.id)}" type="button">수동 프롬프트 보내기</button>
+      </div>
+      ${manualPromptEditor({ kind: "character", id: character.id, prompt: character.prompt || "", label: `@${character.key}` })}` : ""}
     </article>
   `).join("");
 }
@@ -862,11 +892,10 @@ elements.jobList.addEventListener("click", withUiError(async (event) => {
     await send("OPEN_IMAGE", { url: imageButton.dataset.openImage });
     return;
   }
+  if (await handleManualPromptClick(event)) return;
   const prepareButton = event.target.closest("[data-prepare-manual-job]");
   if (prepareButton) {
-    state = await send("PREPARE_MANUAL_SCENE", { jobId: prepareButton.dataset.prepareManualJob });
-    renderState();
-    showToast("Flow 입력창에 캐릭터 바인딩과 프롬프트를 준비했습니다. 생성은 Flow에서 직접 실행하세요.");
+    await sendManualPrompt(`job:${prepareButton.dataset.prepareManualJob}`);
     return;
   }
   const completeButton = event.target.closest("[data-complete-manual-job]");
@@ -985,7 +1014,73 @@ elements.assetMappingList.addEventListener("click", withUiError(async (event) =>
   renderState();
   showToast("삭제되었거나 잘못된 이미지 연결을 해제했습니다.");
 }));
+const MANUAL_SEND_MESSAGE = {
+  job: { type: "PREPARE_MANUAL_SCENE", idKey: "jobId", toast: "Flow 입력창에 캐릭터 바인딩과 프롬프트를 준비했습니다. 생성은 Flow에서 직접 실행하세요." },
+  character: { type: "PREPARE_MANUAL_CHARACTER", idKey: "characterId", toast: "Flow 캐릭터 생성 화면에 프롬프트를 준비했습니다. 생성은 Flow에서 직접 실행하세요." }
+};
+
+async function sendManualPrompt(editorKey, { edited = false } = {}) {
+  const [kind, ...rest] = String(editorKey).split(":");
+  const target = MANUAL_SEND_MESSAGE[kind];
+  if (!target) return;
+  const id = rest.join(":");
+  const payload = { [target.idKey]: id };
+  if (edited) {
+    const draft = String(promptDrafts.get(editorKey) ?? "").trim();
+    if (!draft) throw new Error("보낼 프롬프트가 비어 있습니다.");
+    payload.prompt = draft;
+  }
+  state = await send(target.type, payload);
+  openPromptEditors.delete(editorKey);
+  promptDrafts.delete(editorKey);
+  renderState();
+  showToast(target.toast);
+}
+
+// Returns true when the click was a manual-prompt editor interaction.
+async function handleManualPromptClick(event) {
+  const toggle = event.target.closest("[data-edit-prompt]");
+  if (toggle) {
+    const editorKey = toggle.dataset.editPrompt;
+    if (openPromptEditors.has(editorKey)) {
+      openPromptEditors.delete(editorKey);
+      promptDrafts.delete(editorKey);
+    } else {
+      openPromptEditors.add(editorKey);
+    }
+    renderState();
+    return true;
+  }
+  const resetButton = event.target.closest("[data-reset-prompt]");
+  if (resetButton) {
+    promptDrafts.delete(resetButton.dataset.resetPrompt);
+    renderState();
+    return true;
+  }
+  const sendButton = event.target.closest("[data-send-edited]");
+  if (sendButton) {
+    await sendManualPrompt(sendButton.dataset.sendEdited, { edited: true });
+    return true;
+  }
+  return false;
+}
+
+function handleManualPromptInput(event) {
+  const field = event.target.closest("[data-prompt-draft]");
+  if (!field) return;
+  promptDrafts.set(field.dataset.promptDraft, field.value);
+}
+
+elements.jobList.addEventListener("input", handleManualPromptInput);
+elements.characterList.addEventListener("input", handleManualPromptInput);
+
 elements.characterList.addEventListener("click", withUiError(async (event) => {
+  if (await handleManualPromptClick(event)) return;
+  const manualButton = event.target.closest("[data-prepare-manual-character]");
+  if (manualButton) {
+    await sendManualPrompt(`character:${manualButton.dataset.prepareManualCharacter}`);
+    return;
+  }
   const retryButton = event.target.closest("[data-retry-character]");
   if (retryButton) {
     await retryAndResume("RETRY_CHARACTER", { characterId: retryButton.dataset.retryCharacter });
