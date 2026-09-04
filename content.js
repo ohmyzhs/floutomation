@@ -478,6 +478,12 @@
   }
 
   function findAssetPickerDialog() {
+    const pane = Array.from(document.querySelectorAll(".cdk-overlay-pane")).find((candidate) => {
+      return candidate instanceof HTMLElement
+        && visible(candidate)
+        && Boolean(candidate.querySelector("button.asset-item, mat-list-item[role=tab]"));
+    });
+    if (pane) return pane;
     const searchInputs = Array.from(document.querySelectorAll('input, [role="textbox"]')).filter((control) => {
       if (!(control instanceof HTMLElement) || !visible(control)) return false;
       const descriptor = `${control.getAttribute("aria-label") || ""} ${control.getAttribute("placeholder") || ""}`;
@@ -556,12 +562,13 @@
   function findCharacterAssetOption(dialog, key) {
     if (!dialog) return null;
     const target = normalize(key).replace(/^@/, "");
-    return Array.from(dialog.querySelectorAll('[role="option"], button')).find((option) => {
+    return Array.from(dialog.querySelectorAll('button.asset-item, [role="option"], button')).find((option) => {
       if (!(option instanceof HTMLElement) || !visible(option)) return false;
       const text = normalize(option.textContent);
       const imageLabel = normalize(option.querySelector("img")?.getAttribute("alt") || "");
       const exactName = imageLabel === target
         || text === target
+        || text === `${target}캐릭터`
         || text === `${target}${target}`
         || text === `${target}${target}${normalize("캐릭터")}`
         || text === `${target}${target}character`;
@@ -642,23 +649,29 @@
     const beforeReferenceCount = findCharacterReferenceControls(input).length;
     // Flow's '@' shortcut opens the character-aware picker. Opening the generic
     // asset menu instead can add only an image chip, without a usable character anchor.
-    await insertTrustedText(input, " ");
     await pressTrustedAtSign(input);
     let dialog = await waitFor(findAssetPickerDialog, {
       timeoutMs: 8_000,
       intervalMs: 100,
       error: `@${key} 연결을 위한 Flow 애셋 선택창이 열리지 않았습니다.`
     });
+    const pickerTab = Array.from(dialog.querySelectorAll('mat-list-item[role="tab"], [role="tab"]')).find((tab) => {
+      return tab instanceof HTMLElement && visible(tab) && /캐릭터$|character$/i.test(normalize(tab.textContent));
+    });
+    if (pickerTab && !settingControlSelected(pickerTab)) {
+      await clickTrusted(pickerTab, { settleMs: 700 });
+      dialog = await waitFor(findAssetPickerDialog, {
+        timeoutMs: 5_000,
+        intervalMs: 100,
+        error: "Flow 애셋 창의 캐릭터 탭을 선택하지 못했습니다."
+      });
+    }
     const activeCharacterFilter = findCharacterAssetFilter(dialog);
     if (!activeCharacterFilter || !settingControlSelected(activeCharacterFilter)) {
       dialog = await selectCharacterAssetFilter(dialog);
     }
-    const searchInput = await waitFor(() => findAssetSearchInput(dialog), {
-      timeoutMs: 3_000,
-      intervalMs: 100,
-      error: "Flow 애셋 검색 입력란을 찾지 못했습니다."
-    });
-    await insertTrustedText(searchInput, key, { clear: true });
+    const searchInput = findAssetSearchInput(dialog);
+    if (searchInput) await insertTrustedText(searchInput, key, { clear: true });
 
     const option = await waitFor(() => findCharacterAssetOption(dialog, key), {
       timeoutMs: 8_000,
@@ -688,8 +701,7 @@
     });
     await waitFor(() => {
       const referenceCount = findCharacterReferenceControls(input).length;
-      const editorText = normalizedEditorText(input).replace(/\s+/g, "").toLowerCase();
-      return referenceCount > beforeReferenceCount && editorText.includes(normalize(key));
+      return referenceCount > beforeReferenceCount;
     }, {
       timeoutMs: 5_000,
       intervalMs: 100,
@@ -699,40 +711,36 @@
 
   async function setPromptWithCharacterReferences(input, prompt, expectedRefs = []) {
     const expected = new Set(expectedRefs.map(String));
-    const matches = [...prompt.matchAll(/@([A-Za-z][\w-]*)/g)];
-    const boundKeys = new Set();
-    input = await clearScenePrompt(input);
-
-    const plainPrompt = String(prompt || "").replace(/@[A-Za-z][\w-]*/g, "");
-    await insertTrustedText(input, plainPrompt);
-    const expectedBody = plainPrompt.replace(/[\s\u200b]+/g, "");
-    await waitFor(() => normalizedEditorText(input).replace(/[\s\u200b]+/g, "").includes(expectedBody), {
-      timeoutMs: 8_000,
-      intervalMs: 100,
-      error: "캐릭터 앵커를 붙이기 전 장면 프롬프트 본문 전체를 Flow 입력창에 넣지 못했습니다."
-    });
-
-    for (const match of matches) {
+    const source = String(prompt || "");
+    const parts = [];
+    const mentionPattern = /@([A-Za-z][\w-]*)/g;
+    let cursor = 0;
+    let match;
+    while ((match = mentionPattern.exec(source)) !== null) {
       const key = match[1];
-      if (!expected.has(key)) {
-        throw new Error(`정의되지 않은 캐릭터 참조 @${key}가 포함되어 있습니다.`);
-      }
-      if (boundKeys.has(key)) {
-        continue;
-      } else {
-        await bindCharacterAssetReference(input, key);
-        boundKeys.add(key);
+      if (!expected.has(key)) continue;
+      if (match.index > cursor) parts.push({ text: source.slice(cursor, match.index) });
+      parts.push({ key });
+      cursor = match.index + match[0].length;
+    }
+    if (cursor < source.length) parts.push({ text: source.slice(cursor) });
+    const expectedReferenceCount = parts.filter((part) => part.key).length;
+    input = await clearScenePrompt(input);
+    for (const part of parts) {
+      if (part.key) {
+        await bindCharacterAssetReference(input, part.key);
+      } else if (part.text) {
+        await insertTrustedText(input, part.text);
       }
     }
 
     await waitFor(() => {
-      const editorText = normalizedEditorText(input).replace(/[\s\u200b]+/g, "");
       const referenceCount = findCharacterReferenceControls(input).length;
-      return referenceCount >= boundKeys.size && editorText.includes(expectedBody);
+      return referenceCount === expectedReferenceCount;
     }, {
       timeoutMs: 8_000,
       intervalMs: 100,
-      error: "캐릭터 참조는 연결됐지만 장면 프롬프트 본문 전체가 입력되지 않았습니다. 생성 요청은 보내지 않았습니다."
+      error: `캐릭터 참조 칩 수가 프롬프트의 @참조 발생 횟수와 일치하지 않습니다 (예상 ${expectedReferenceCount}개). 생성 요청은 보내지 않았습니다.`
     });
   }
 

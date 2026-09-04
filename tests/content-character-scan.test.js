@@ -345,24 +345,24 @@ test("returning from an empty creator accepts the project workspace instead of r
   );
 });
 
-test("scene prompt text is committed before unique character anchors are appended", () => {
-  assert.match(promptReferenceSource, /const boundKeys = new Set\(\);/);
-  assert.match(promptReferenceSource, /const plainPrompt = String\(prompt \|\| ""\)\.replace/);
-  assert.match(promptReferenceSource, /await insertTrustedText\(input, plainPrompt\)/);
-  assert.match(promptReferenceSource, /캐릭터 앵커를 붙이기 전 장면 프롬프트 본문 전체/);
-  assert.match(promptReferenceSource, /if \(boundKeys\.has\(key\)\) \{\s*continue;/);
-  assert.match(promptReferenceSource, /await bindCharacterAssetReference\(input, key\);\s*boundKeys\.add\(key\);/);
-  assert.match(promptReferenceSource, /referenceCount >= boundKeys\.size/);
+test("scene prompt preserves every character-anchor occurrence in its original position", () => {
+  assert.match(promptReferenceSource, /const mentionPattern = \/@\(\[A-Za-z\]\[\\w-\]\*\)\/g;/);
+  assert.match(promptReferenceSource, /parts\.push\(\{ text: source\.slice\(cursor, match\.index\) \}\);/);
+  assert.match(promptReferenceSource, /parts\.push\(\{ key \}\);/);
+  assert.match(promptReferenceSource, /for \(const part of parts\) \{/);
+  assert.match(promptReferenceSource, /await bindCharacterAssetReference\(input, part\.key\);/);
+  assert.match(promptReferenceSource, /await insertTrustedText\(input, part\.text\);/);
+  assert.match(promptReferenceSource, /referenceCount === expectedReferenceCount/);
 });
 
 test("character anchors use Flow's @ shortcut instead of the generic asset menu", () => {
   assert.match(contentSource, /async function pressTrustedAtSign/);
   assert.match(contentSource, /await pressTrustedAtSign\(input\)/);
   assert.match(contentSource, /Flow's '@' shortcut opens the character-aware picker/);
-  assert.match(contentSource, /editorText\.includes\(normalize\(key\)\)/);
+  assert.match(contentSource, /referenceCount > beforeReferenceCount/);
   assert.match(contentSource, /debugger-originated key events/);
   assert.match(contentSource, /await clickTrusted\(assetButton/);
-  assert.match(contentSource, /await insertTrustedText\(input, " "\)/);
+  assert.match(contentSource, /button\.asset-item/);
 });
 
 test("current Flow character ingredient chips count as anchor references", () => {
