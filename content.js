@@ -653,8 +653,16 @@
     return input;
   }
 
-  async function bindCharacterAssetReference(input, key) {
+  function countHandleOccurrences(input, key) {
+    const haystack = normalizedEditorText(input).toLowerCase();
+    const needle = String(key || "").toLowerCase();
+    if (!needle) return 0;
+    return haystack.split(needle).length - 1;
+  }
+
+  async function bindCharacterAssetReference(input, key, { requiresNewAsset = true } = {}) {
     const beforeReferenceCount = findCharacterReferenceControls(input).length;
+    const beforeHandleOccurrences = countHandleOccurrences(input, key);
     // Flow's '@' shortcut opens the character-aware picker. Opening the generic
     // asset menu instead can add only an image chip, without a usable character anchor.
     await pressTrustedAtSign(input);
@@ -709,11 +717,16 @@
     });
     await waitFor(() => {
       const referenceCount = findCharacterReferenceControls(input).length;
-      return referenceCount > beforeReferenceCount;
+      const handleOccurrences = countHandleOccurrences(input, key);
+      return requiresNewAsset
+        ? referenceCount > beforeReferenceCount
+        : handleOccurrences > beforeHandleOccurrences;
     }, {
       timeoutMs: 5_000,
       intervalMs: 100,
-      error: `@${key}가 Flow의 캐릭터 앵커로 연결되지 않았습니다.`
+      error: requiresNewAsset
+        ? `@${key}가 Flow의 캐릭터 앵커로 연결되지 않았습니다.`
+        : `@${key}의 반복 참조가 프롬프트 원래 위치에 들어가지 않았습니다.`
     });
   }
 
@@ -733,10 +746,16 @@
     }
     if (cursor < source.length) parts.push({ text: source.slice(cursor) });
     const expectedReferenceCount = parts.filter((part) => part.key).length;
+    const expectedHandleOccurrences = new Map();
+    for (const part of parts) {
+      if (part.key) expectedHandleOccurrences.set(part.key, (expectedHandleOccurrences.get(part.key) || 0) + 1);
+    }
+    const anchoredKeys = new Set();
     input = await clearScenePrompt(input);
     for (const part of parts) {
       if (part.key) {
-        await bindCharacterAssetReference(input, part.key);
+        await bindCharacterAssetReference(input, part.key, { requiresNewAsset: !anchoredKeys.has(part.key) });
+        anchoredKeys.add(part.key);
       } else if (part.text) {
         await insertTrustedText(input, part.text);
       }
@@ -744,11 +763,12 @@
 
     await waitFor(() => {
       const referenceCount = findCharacterReferenceControls(input).length;
-      return referenceCount === expectedReferenceCount;
+      return referenceCount >= anchoredKeys.size
+        && [...expectedHandleOccurrences].every(([key, expectedCount]) => countHandleOccurrences(input, key) >= expectedCount);
     }, {
       timeoutMs: 8_000,
       intervalMs: 100,
-      error: `캐릭터 참조 칩 수가 프롬프트의 @참조 발생 횟수와 일치하지 않습니다 (예상 ${expectedReferenceCount}개). 생성 요청은 보내지 않았습니다.`
+      error: `캐릭터 소재 연결 또는 반복 참조가 프롬프트에 완성되지 않았습니다 (소재 ${anchoredKeys.size}명, 참조 ${expectedReferenceCount}회). 생성 요청은 보내지 않았습니다.`
     });
   }
 

@@ -350,9 +350,12 @@ test("scene prompt preserves every character-anchor occurrence in its original p
   assert.match(promptReferenceSource, /parts\.push\(\{ text: source\.slice\(cursor, match\.index\) \}\);/);
   assert.match(promptReferenceSource, /parts\.push\(\{ key \}\);/);
   assert.match(promptReferenceSource, /for \(const part of parts\) \{/);
-  assert.match(promptReferenceSource, /await bindCharacterAssetReference\(input, part\.key\);/);
+  assert.match(promptReferenceSource, /await bindCharacterAssetReference\(input, part\.key, \{ requiresNewAsset:/);
   assert.match(promptReferenceSource, /await insertTrustedText\(input, part\.text\);/);
-  assert.match(promptReferenceSource, /referenceCount === expectedReferenceCount/);
+  assert.match(promptReferenceSource, /const expectedHandleOccurrences = new Map\(\);/);
+  assert.match(promptReferenceSource, /const anchoredKeys = new Set\(\);/);
+  assert.match(promptReferenceSource, /requiresNewAsset: !anchoredKeys\.has\(part\.key\)/);
+  assert.match(promptReferenceSource, /countHandleOccurrences\(input, key\) >= expectedCount/);
 });
 
 test("character anchors use Flow's @ shortcut instead of the generic asset menu", () => {
