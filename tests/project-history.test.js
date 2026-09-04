@@ -10,7 +10,7 @@ import {
   upsertProjectCharacterProfile
 } from "../lib/project-history.js";
 
-test("Flow character detail URLs expose stable project and character IDs", () => {
+test("flow.google.com character detail URLs expose stable project and character IDs", () => {
   assert.deepEqual(
     characterDetailFromFlowUrl("https://flow.google.com/project/project-a/character/character-b?source=test"),
     {
@@ -19,25 +19,18 @@ test("Flow character detail URLs expose stable project and character IDs", () =>
       url: "https://flow.google.com/project/project-a/character/character-b"
     }
   );
-  assert.deepEqual(
-    characterDetailFromFlowUrl("https://labs.google/fx/ko/tools/flow/project/project-a/character/character-b/"),
-    {
-      projectId: "project-a",
-      characterId: "character-b",
-      url: "https://labs.google/fx/ko/tools/flow/project/project-a/character/character-b"
-    }
-  );
+  assert.equal(characterDetailFromFlowUrl("https://labs.google/fx/ko/tools/flow/project/project-a/character/character-b/"), null);
   assert.equal(characterDetailFromFlowUrl("https://flow.google.com/project/project-a/character"), null);
 });
 
-test("Flow project IDs are extracted from legacy and direct project URLs", () => {
+test("Flow project IDs are extracted only from flow.google.com project URLs", () => {
   assert.equal(
     projectIdFromFlowUrl("https://labs.google/fx/ko/tools/flow/project/c4f8aa7e-0ed5-4893-9d42-141ddc250f78"),
-    "c4f8aa7e-0ed5-4893-9d42-141ddc250f78"
+    ""
   );
   assert.equal(
     projectIdFromFlowUrl("https://flow.google/project/68a9af2f-a252-4883-900b-c5a1794d7193"),
-    "68a9af2f-a252-4883-900b-c5a1794d7193"
+    ""
   );
   assert.equal(
     projectIdFromFlowUrl("https://flow.google.com/project/eab2930a-6753-4fb3-a20c-accb80166330"),
@@ -45,16 +38,16 @@ test("Flow project IDs are extracted from legacy and direct project URLs", () =>
   );
   assert.equal(
     projectIdFromFlowUrl("https://fow.google/project/68a9af2f-a252-4883-900b-c5a1794d7193"),
-    "68a9af2f-a252-4883-900b-c5a1794d7193"
+    ""
   );
   assert.equal(projectIdFromFlowUrl("https://labs.google/fx/tools/flow/"), "");
 });
 
-test("Flow URL recognition accepts only supported legacy and direct routes", () => {
-  assert.equal(isFlowUrl("https://labs.google/fx/tools/flow/project/project-a"), true);
-  assert.equal(isFlowUrl("https://flow.google/project/project-a"), true);
+test("Flow URL recognition accepts only flow.google.com project routes", () => {
+  assert.equal(isFlowUrl("https://labs.google/fx/tools/flow/project/project-a"), false);
+  assert.equal(isFlowUrl("https://flow.google/project/project-a"), false);
   assert.equal(isFlowUrl("https://flow.google.com/project/project-a"), true);
-  assert.equal(isFlowUrl("https://fow.google/project/project-a"), true);
+  assert.equal(isFlowUrl("https://fow.google/project/project-a"), false);
   assert.equal(isFlowUrl("https://flow.google/not-a-project"), false);
   assert.equal(isFlowUrl("https://example.com/project/project-a"), false);
 });

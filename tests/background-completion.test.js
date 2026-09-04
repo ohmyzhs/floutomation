@@ -38,7 +38,8 @@ test("manual scene mode pauses the queue and requires a separate user completion
 
 test("background validates and opens a tracked Flow asset detail", () => {
   assert.match(backgroundSource, /message\.type === "OPEN_ASSET"/);
-  assert.match(backgroundSource, /labs\.google/);
+  assert.match(backgroundSource, /isFlowAssetUrl/);
+  assert.doesNotMatch(backgroundSource, /labs\.google|fow\.google/);
   assert.match(backgroundSource, /chrome\.tabs\.create/);
 });
 

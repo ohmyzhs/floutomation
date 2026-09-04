@@ -120,7 +120,7 @@ Chrome 창을 최소화해도 큐 상태 저장과 다음 작업 예약은 계�
 3. 우측 상단의 **개발자 모드**를 켭니다.
 4. **압축해제된 확장 프로그램을 로드합니다**를 누릅니다.
 5. 이 저장소의 최상위 폴더를 선택합니다.
-6. [Google Flow](https://labs.google/fx/tools/flow/) 또는 `https://flow.google.com/project/{프로젝트ID}`에서 작업할 프로젝트를 엽니다.
+6. [Google Flow](https://flow.google.com/)에서 `https://flow.google.com/project/{프로젝트ID}` 형식의 작업 프로젝트를 엽니다.
 7. Chrome 도구 모음에서 Flow Batch Studio 아이콘을 눌러 사이드패널을 엽니다.
 
 코드가 변경된 뒤에는 `chrome://extensions`에서 확장 프로그램의 새로고침 아이콘을 눌러야 새 버전이 적용됩니다. 이미 열려 있던 Flow 탭에서 연결되지 않으면 해당 탭도 한 번 새로고침한 뒤 사이드패널의 **연결 확인**을 누릅니다.

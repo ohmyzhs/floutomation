@@ -84,11 +84,11 @@ const mediaCardsStart = contentSource.indexOf("function sceneMediaCardAssets");
 const mediaCardsEnd = contentSource.indexOf("function findMediaScrollContainer", mediaCardsStart);
 const mediaCardsSource = contentSource.slice(mediaCardsStart, mediaCardsEnd);
 
-test("content script stays active on direct Flow project URLs", () => {
-  assert.match(contentGuardSource, /DIRECT_FLOW_HOSTS.*flow\.google\.com/);
+test("content script stays active only on flow.google.com project URLs", () => {
+  assert.match(contentGuardSource, /location\.hostname === "flow\.google\.com"/);
   assert.match(contentGuardSource, /DIRECT_FLOW_PATH/);
-  assert.match(contentGuardSource, /DIRECT_FLOW_HOSTS\.has\(location\.hostname\)/);
   assert.match(contentGuardSource, /DIRECT_FLOW_PATH\.test\(location\.pathname\)/);
+  assert.doesNotMatch(contentGuardSource, /labs\.google|fow\.google|DIRECT_FLOW_HOSTS/);
 });
 
 test("the general image prompt cannot be mistaken for the character description input", () => {
@@ -359,21 +359,21 @@ test("scene prompt preserves every character-anchor occurrence in its original p
   assert.match(promptReferenceSource, /parts\.push\(\{ text: source\.slice\(cursor, match\.index\) \}\);/);
   assert.match(promptReferenceSource, /parts\.push\(\{ key \}\);/);
   assert.match(promptReferenceSource, /for \(const part of parts\) \{/);
-  assert.match(promptReferenceSource, /await bindCharacterAssetReference\(input, part\.key, \{ requiresNewAsset:/);
+  assert.match(promptReferenceSource, /input = await bindCharacterAssetReference\(input, part\.key\);/);
   assert.match(promptReferenceSource, /await insertTrustedText\(input, part\.text\);/);
-  assert.match(promptReferenceSource, /const expectedHandleOccurrences = new Map\(\);/);
-  assert.match(promptReferenceSource, /const anchoredKeys = new Set\(\);/);
-  assert.match(promptReferenceSource, /requiresNewAsset: !anchoredKeys\.has\(part\.key\)/);
-  assert.match(promptReferenceSource, /countHandleOccurrences\(input, key\) >= expectedCount/);
+  assert.match(promptReferenceSource, /input = await waitForLiveDirectPromptInput\(input\);/);
+  assert.match(promptReferenceSource, /mentionCount === expectedReferenceCount/);
+  assert.match(promptReferenceSource, /actualPrompt\.includes\(wantedPrompt\)/);
+  assert.doesNotMatch(promptReferenceSource, /anchoredKeys|requiresNewAsset|countHandleOccurrences/);
 });
 
-test("character anchors use Flow's @ shortcut instead of the generic asset menu", () => {
-  assert.match(contentSource, /async function pressTrustedAtSign/);
-  assert.match(contentSource, /await pressTrustedAtSign\(input\)/);
-  assert.match(contentSource, /Flow's '@' shortcut opens the character-aware picker/);
-  assert.match(contentSource, /referenceCount > beforeReferenceCount/);
-  assert.match(contentSource, /debugger-originated key events/);
-  assert.match(contentSource, /await clickTrusted\(assetButton/);
+test("character anchors insert @ into the live ProseMirror and require one mention chip per occurrence", () => {
+  assert.match(contentSource, /async function openCharacterAssetPicker/);
+  assert.match(contentSource, /await insertTrustedText\(input, "@"\)/);
+  assert.match(contentSource, /const beforeMentionCount = findPromptMentionChips\(input\)\.length/);
+  assert.match(contentSource, /findPromptMentionChips\(liveDirectPromptInput\(input\)\)\.length > beforeMentionCount/);
+  assert.match(contentSource, /mention-chip-invalid/);
+  assert.doesNotMatch(contentSource, /await clickTrusted\(assetButton/);
   assert.match(contentSource, /button\.asset-item/);
 });
 
@@ -392,7 +392,7 @@ test("an invalidated extension context never throws from best-effort messages", 
 test("manual scene preparation binds the prompt but never submits or monitors generation", () => {
   assert.match(manualPromptSource, /enterDirectMediaWorkspace\(\)/);
   assert.match(manualPromptSource, /ensureDirectImageSettings\(input, options\.model, options\.aspectRatio, options\.imagesPerPrompt\)/);
-  assert.match(manualPromptSource, /setPromptWithCharacterReferences\(input, job\.prompt, job\.characterRefs \|\| \[\]\)/);
+  assert.match(manualPromptSource, /input = await setPromptWithCharacterReferences\(input, job\.prompt, job\.characterRefs \|\| \[\]\)/);
   assert.doesNotMatch(manualPromptSource, /findSubmitButton|clickTrusted\(submitButton\)|monitorGeneration/);
 });
 

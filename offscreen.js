@@ -20,8 +20,8 @@ async function fetchOriginalOnce(entry) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    // The labs.google redirect endpoint requires the signed-in Flow session.
-    // The final flow-content.google response is permitted by manifest host access.
+    // Flow download endpoints require the signed-in Flow session. The final
+    // flow-content.google response is permitted by manifest host access.
     const response = await fetch(entry.url, {
       credentials: "include",
       redirect: "follow",

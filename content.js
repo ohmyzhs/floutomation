@@ -1,12 +1,10 @@
 (() => {
-  const LEGACY_FLOW_PATH = /^\/fx\/(?:[^/]+\/)?tools\/flow(?:\/|$)/i;
   const DIRECT_FLOW_PATH = /^\/project\/[^/]+(?:\/|$)/i;
   const FLOW_PROJECT_WORKSPACE_PATH = /(?:^|\/)project\/[^/]+\/?$/i;
   const FLOW_CHARACTER_DETAIL_PATH = /(?:^|\/)project\/[^/]+\/character\/[^/?#]+\/?$/i;
-  const DIRECT_FLOW_HOSTS = new Set(["flow.google", "flow.google.com", "fow.google"]);
-  const isDirectFlowProject = DIRECT_FLOW_HOSTS.has(location.hostname)
+  const isDirectFlowProject = location.hostname === "flow.google.com"
     && DIRECT_FLOW_PATH.test(location.pathname);
-  if (!LEGACY_FLOW_PATH.test(location.pathname) && !isDirectFlowProject) return;
+  if (!isDirectFlowProject) return;
   if (window.__FLOW_BATCH_STUDIO_LOADED__) return;
   window.__FLOW_BATCH_STUDIO_LOADED__ = true;
 
@@ -197,8 +195,17 @@
   }
 
   function findDirectPromptInput() {
+    const proseMirror = Array.from(document.querySelectorAll(
+      '.prosemirror-editor .ProseMirror[contenteditable="true"], flow-rich-text-editor .ProseMirror[contenteditable="true"], .ProseMirror[contenteditable="true"]'
+    )).find((element) => element instanceof HTMLElement
+      && visible(element)
+      && !element.closest('.cdk-overlay-pane, [role="dialog"]'));
+    if (proseMirror) return proseMirror;
+
     const candidates = Array.from(document.querySelectorAll('[contenteditable="true"]'))
-      .filter((element) => element instanceof HTMLElement && visible(element));
+      .filter((element) => element instanceof HTMLElement
+        && visible(element)
+        && !element.closest('.cdk-overlay-pane, [role="dialog"]'));
     return candidates.find((input) => {
       let node = input.parentElement;
       for (let depth = 0; node && depth < 7; depth += 1, node = node.parentElement) {
@@ -210,6 +217,21 @@
       }
       return false;
     }) || null;
+  }
+
+  function liveDirectPromptInput(previousInput = null) {
+    return findDirectPromptInput()
+      || (previousInput instanceof HTMLElement && document.contains(previousInput) && visible(previousInput)
+        ? previousInput
+        : null);
+  }
+
+  function waitForLiveDirectPromptInput(previousInput = null) {
+    return waitFor(() => liveDirectPromptInput(previousInput), {
+      timeoutMs: 8_000,
+      intervalMs: 100,
+      error: "Flow가 프롬프트 편집기를 다시 그린 뒤 현재 입력창을 찾지 못했습니다."
+    });
   }
 
   function settingControlSelected(control) {
@@ -397,37 +419,17 @@
     await sleep(80);
   }
 
-  async function pressTrustedAtSign(input) {
-    if (!(input instanceof HTMLElement) || !document.contains(input)) {
-      throw new Error("Flow 입력란이 화면에서 사라졌습니다.");
-    }
-    placeTextSelection(input);
-    const response = await sendRuntimeMessage({
-      type: "FLOW_TRUSTED_KEY",
-      key: "@"
+  async function openCharacterAssetPicker(input, key) {
+    input = await waitForLiveDirectPromptInput(input);
+    // A real "@" insertion opens Flow's mention picker. The generic + asset
+    // menu can attach an image without creating a character mention, so it is
+    // deliberately not a fallback for character anchoring.
+    await insertTrustedText(input, "@");
+    return waitFor(findAssetPickerDialog, {
+      timeoutMs: 8_000,
+      intervalMs: 100,
+      error: `@${key} 연결을 위한 Flow 캐릭터 선택창이 열리지 않았습니다.`
     });
-    if (!response?.ok) {
-      throw new Error(response?.error || "Flow 애셋 선택창을 여는 실제 키 입력을 전달하지 못했습니다.");
-    }
-    for (let attempt = 0; attempt < 6; attempt += 1) {
-      if (findAssetPickerDialog()) return;
-      await sleep(100);
-    }
-    // Some current Flow builds render '@' but do not open its autocomplete
-    // popover for debugger-originated key events. Its prompt asset button then
-    // opens the same character-filtered picker while retaining the '@' token.
-    let node = input.parentElement;
-    for (let depth = 0; node && depth < 7; depth += 1, node = node.parentElement) {
-      const assetButton = Array.from(node.querySelectorAll("button")).find((candidate) => {
-        if (!visible(candidate)) return false;
-        const descriptor = accessibleDescriptor(candidate).replace(/\s+/g, "").toLowerCase();
-        return /프롬프트상자에소재추가|add(?:media|asset)to(?:the)?prompt/.test(descriptor);
-      });
-      if (assetButton) {
-        await clickTrusted(assetButton, { settleMs: 500 });
-        return;
-      }
-    }
   }
 
   async function clickTrusted(element, { settleMs = UI_SETTLE_MS } = {}) {
@@ -632,6 +634,23 @@
     return [];
   }
 
+  function promptInputScope(input) {
+    let node = input instanceof HTMLElement ? input : null;
+    for (let depth = 0; node && depth < 8; depth += 1, node = node.parentElement) {
+      const hasEditor = node.matches?.('.ProseMirror, flow-rich-text-editor, .prosemirror-editor')
+        || Boolean(node.querySelector?.('.ProseMirror[contenteditable="true"]'));
+      const hasSubmit = Boolean(node.querySelector?.('button[aria-label="생성 시작"], button[type="submit"]'));
+      if (hasEditor && hasSubmit) return node;
+    }
+    return input instanceof HTMLElement ? input : document.body;
+  }
+
+  function findPromptMentionChips(input = liveDirectPromptInput()) {
+    const scope = promptInputScope(input);
+    return Array.from(scope.querySelectorAll('.mention-chip[data-entity-id], span.mention-chip'))
+      .filter((chip) => chip instanceof HTMLElement && visible(chip));
+  }
+
   function findPromptClearButton(input) {
     let node = input?.parentElement || null;
     for (let depth = 0; node && depth < 7; depth += 1, node = node.parentElement) {
@@ -649,16 +668,18 @@
     const clearButton = findPromptClearButton(input);
     if (clearButton) {
       await clickTrusted(clearButton);
-      input = await waitFor(findDirectPromptInput, {
-        timeoutMs: 5_000,
-        intervalMs: 100,
-        error: "Flow 프롬프트를 지운 뒤 입력란을 다시 찾지 못했습니다."
-      });
+      input = await waitForLiveDirectPromptInput(input);
     } else {
       await insertTrustedText(input, "", { clear: true });
     }
 
-    await waitFor(() => findCharacterReferenceControls(input).length === 0, {
+    input = await waitForLiveDirectPromptInput(input);
+    await waitFor(() => {
+      const currentInput = liveDirectPromptInput(input);
+      if (!currentInput) return false;
+      input = currentInput;
+      return findPromptMentionChips(currentInput).length === 0 && !normalizedEditorText(currentInput);
+    }, {
       timeoutMs: 5_000,
       intervalMs: 100,
       error: "이전 캐릭터 참조 칩을 초기화하지 못했습니다. Flow의 프롬프트 지우기 버튼으로 비운 뒤 재시도해 주세요."
@@ -666,43 +687,45 @@
     return input;
   }
 
-  function countHandleOccurrences(input, key) {
-    const haystack = normalizedEditorText(input).toLowerCase();
-    const needle = String(key || "").toLowerCase();
-    if (!needle) return 0;
-    return haystack.split(needle).length - 1;
+  function normalizeTrackedPrompt(value) {
+    return String(value || "")
+      .normalize("NFKC")
+      .replace(/@(?=[A-Za-z][\w-]*)/g, "")
+      .toLowerCase()
+      .replace(/[\s\p{P}\p{S}]+/gu, "");
   }
 
-  async function bindCharacterAssetReference(input, key, { requiresNewAsset = true } = {}) {
-    const beforeReferenceCount = findCharacterReferenceControls(input).length;
-    const beforeHandleOccurrences = countHandleOccurrences(input, key);
-    // Flow's '@' shortcut opens the character-aware picker. Opening the generic
-    // asset menu instead can add only an image chip, without a usable character anchor.
-    await pressTrustedAtSign(input);
-    let dialog = await waitFor(findAssetPickerDialog, {
-      timeoutMs: 8_000,
-      intervalMs: 100,
-      error: `@${key} 연결을 위한 Flow 애셋 선택창이 열리지 않았습니다.`
-    });
+  async function bindCharacterAssetReference(input, key) {
+    input = await waitForLiveDirectPromptInput(input);
+    const beforeMentionCount = findPromptMentionChips(input).length;
+    let dialog = await openCharacterAssetPicker(input, key);
     const activeCharacterFilter = findCharacterAssetFilter(dialog);
     if (!activeCharacterFilter || !settingControlSelected(activeCharacterFilter)) {
       dialog = await selectCharacterAssetFilter(dialog);
     }
-    const searchInput = findAssetSearchInput(dialog);
+    const searchInput = findAssetSearchInput(findAssetPickerDialog());
     if (searchInput) await insertTrustedText(searchInput, key, { clear: true });
 
-    const option = await waitFor(() => findCharacterAssetOption(dialog, key), {
+    const findCurrentOption = () => {
+      const currentDialog = findAssetPickerDialog();
+      return currentDialog ? findCharacterAssetOption(currentDialog, key) : null;
+    };
+    const option = await waitFor(findCurrentOption, {
       timeoutMs: 8_000,
       intervalMs: 150,
       error: `Flow 애셋에서 @${key} 캐릭터를 찾지 못했습니다. 등록 이름과 유형이 '캐릭터'인지 확인해 주세요.`
     });
-    const selected = option.getAttribute("aria-selected") === "true" || option.getAttribute("data-state") === "checked";
-    if (!selected) await clickTrusted(option, { settleMs: 500 });
+    await clickTrusted(option, { settleMs: 500 });
 
-    const openDialog = findAssetPickerDialog();
-    if (openDialog) {
+    const mentionInserted = () => findPromptMentionChips(liveDirectPromptInput(input)).length > beforeMentionCount;
+    let inserted = await waitFor(mentionInserted, {
+      timeoutMs: 3_000,
+      intervalMs: 100,
+      error: ""
+    }).catch(() => false);
+    if (!inserted && findAssetPickerDialog()) {
       const addButton = await waitFor(() => {
-        const button = findAssetAddButton(openDialog);
+        const button = findAssetAddButton(findAssetPickerDialog());
         return button && !button.disabled && button.getAttribute("aria-disabled") !== "true" ? button : null;
       }, {
         timeoutMs: 5_000,
@@ -710,25 +733,75 @@
         error: `@${key} 캐릭터의 '프롬프트에 추가' 버튼이 활성화되지 않았습니다.`
       });
       await clickTrusted(addButton);
+      inserted = await waitFor(mentionInserted, {
+        timeoutMs: 3_000,
+        intervalMs: 100,
+        error: ""
+      }).catch(() => false);
     }
+    if (!inserted) {
+      // Some Flow builds commit a character by double-clicking the result,
+      // while others select it once and require "Add to prompt". Try the
+      // explicit Add action first so a second click cannot toggle a selected
+      // character off or insert a duplicate mention.
+      const currentOption = findCurrentOption();
+      if (currentOption) {
+        currentOption.click();
+        inserted = await waitFor(mentionInserted, {
+          timeoutMs: 3_000,
+          intervalMs: 100,
+          error: ""
+        }).catch(() => false);
+      }
+      if (!inserted && findAssetPickerDialog()) {
+        const addButton = findAssetAddButton(findAssetPickerDialog());
+        if (addButton && !addButton.disabled && addButton.getAttribute("aria-disabled") !== "true") {
+          await clickTrusted(addButton);
+          inserted = await waitFor(mentionInserted, {
+            timeoutMs: 3_000,
+            intervalMs: 100,
+            error: ""
+          }).catch(() => false);
+        }
+      }
+    }
+    if (!inserted) throw new Error(`@${key} 캐릭터 mention 칩이 프롬프트에 들어가지 않았습니다.`);
+    const insertedChip = findPromptMentionChips(liveDirectPromptInput(input)).at(-1);
+    if (insertedChip?.classList.contains("mention-chip-invalid")) {
+      throw new Error(`@${key} 캐릭터 mention이 유효하지 않습니다.`);
+    }
+    if (findAssetPickerDialog()) {
+      const response = await sendRuntimeMessage({ type: "FLOW_TRUSTED_KEY", key: "Escape" });
+      if (!response?.ok) throw new Error(response?.error || "Flow 캐릭터 선택창을 닫지 못했습니다.");
+      await waitFor(() => !findAssetPickerDialog(), {
+        timeoutMs: 5_000,
+        intervalMs: 100,
+        error: `@${key} 캐릭터를 추가한 뒤 선택창이 닫히지 않았습니다.`
+      });
+    }
+    input = await waitForLiveDirectPromptInput(input);
+    return input;
+  }
 
-    await waitFor(() => !findAssetPickerDialog(), {
-      timeoutMs: 8_000,
+  // Flow can swap the ProseMirror node while a trusted insert is in flight
+  // (right after a mention chip is committed or the picker closes). If the
+  // text did not land on the editor that is live now, type it once more into
+  // that editor instead of leaving a chip-only prompt behind.
+  async function confirmScenePromptText(input, text) {
+    const wanted = normalizeTrackedPrompt(text);
+    if (!wanted) return input;
+    const landed = () => {
+      const current = liveDirectPromptInput(input);
+      return current && normalizeTrackedPrompt(normalizedEditorText(current)).includes(wanted) ? current : null;
+    };
+    const first = await waitFor(landed, { timeoutMs: 2_000, intervalMs: 100, error: "" }).catch(() => null);
+    if (first) return first;
+    input = await waitForLiveDirectPromptInput(input);
+    await insertTrustedText(input, text);
+    return waitFor(landed, {
+      timeoutMs: 3_000,
       intervalMs: 100,
-      error: `@${key} 캐릭터를 추가한 뒤 애셋 선택창이 닫히지 않았습니다.`
-    });
-    await waitFor(() => {
-      const referenceCount = findCharacterReferenceControls(input).length;
-      const handleOccurrences = countHandleOccurrences(input, key);
-      return requiresNewAsset
-        ? referenceCount > beforeReferenceCount
-        : handleOccurrences > beforeHandleOccurrences;
-    }, {
-      timeoutMs: 5_000,
-      intervalMs: 100,
-      error: requiresNewAsset
-        ? `@${key}가 Flow의 캐릭터 앵커로 연결되지 않았습니다.`
-        : `@${key}의 반복 참조가 프롬프트 원래 위치에 들어가지 않았습니다.`
+      error: "Flow 프롬프트 편집기에 본문이 입력되지 않았습니다. Flow 탭에 DevTools가 열려 있는지 확인해 주세요."
     });
   }
 
@@ -748,30 +821,33 @@
     }
     if (cursor < source.length) parts.push({ text: source.slice(cursor) });
     const expectedReferenceCount = parts.filter((part) => part.key).length;
-    const expectedHandleOccurrences = new Map();
-    for (const part of parts) {
-      if (part.key) expectedHandleOccurrences.set(part.key, (expectedHandleOccurrences.get(part.key) || 0) + 1);
-    }
-    const anchoredKeys = new Set();
     input = await clearScenePrompt(input);
     for (const part of parts) {
+      input = await waitForLiveDirectPromptInput(input);
       if (part.key) {
-        await bindCharacterAssetReference(input, part.key, { requiresNewAsset: !anchoredKeys.has(part.key) });
-        anchoredKeys.add(part.key);
+        input = await bindCharacterAssetReference(input, part.key);
       } else if (part.text) {
         await insertTrustedText(input, part.text);
+        input = await waitForLiveDirectPromptInput(input);
+        input = await confirmScenePromptText(input, part.text);
       }
     }
 
     await waitFor(() => {
-      const referenceCount = findCharacterReferenceControls(input).length;
-      return referenceCount >= anchoredKeys.size
-        && [...expectedHandleOccurrences].every(([key, expectedCount]) => countHandleOccurrences(input, key) >= expectedCount);
+      const currentInput = liveDirectPromptInput(input);
+      if (!currentInput) return false;
+      input = currentInput;
+      const mentionCount = findPromptMentionChips(currentInput).length;
+      const actualPrompt = normalizeTrackedPrompt(normalizedEditorText(currentInput));
+      const wantedPrompt = normalizeTrackedPrompt(source);
+      return mentionCount === expectedReferenceCount
+        && (!wantedPrompt || actualPrompt.includes(wantedPrompt));
     }, {
       timeoutMs: 8_000,
       intervalMs: 100,
-      error: `캐릭터 소재 연결 또는 반복 참조가 프롬프트에 완성되지 않았습니다 (소재 ${anchoredKeys.size}명, 참조 ${expectedReferenceCount}회). 생성 요청은 보내지 않았습니다.`
+      error: `Flow 프롬프트가 완성되지 않았습니다 (캐릭터 mention ${expectedReferenceCount}회와 전체 본문을 확인하지 못함). 생성 요청은 보내지 않았습니다.`
     });
+    return input;
   }
 
   function submitButtonDescriptor(button) {
@@ -2106,9 +2182,8 @@
         baselineFailureCount,
         findSubmitControl: findCharacterSubmitButton,
         retrySubmit: submitWithTrustedEnter,
-        // The reference agent treats navigation to /character/<id> as the
-        // authoritative acceptance signal. This also works on the legacy
-        // labs.google prefix before the detail form finishes rendering.
+        // Navigation to /character/<id> is the authoritative acceptance
+        // signal before the detail form finishes rendering.
         additionalStartSignal: currentCharacterDetailUrl,
         failureMessage: "Flow 캐릭터 만들기 버튼을 실제 좌표로 클릭한 뒤 키보드 Enter까지 재시도했지만 생성 신호를 확인하지 못했습니다.",
         onRetry: async (currentButton) => emitReliable({
@@ -2171,7 +2246,7 @@
         return;
       }
 
-      await setPromptWithCharacterReferences(input, job.prompt, job.characterRefs || []);
+      input = await setPromptWithCharacterReferences(input, job.prompt, job.characterRefs || []);
       await emitReliable({
         type: "FLOW_JOB_PROGRESS",
         jobId: job.id,
@@ -2281,7 +2356,7 @@
     try {
       let input = await enterDirectMediaWorkspace();
       input = await ensureDirectImageSettings(input, options.model, options.aspectRatio, options.imagesPerPrompt);
-      await setPromptWithCharacterReferences(input, job.prompt, job.characterRefs || []);
+      input = await setPromptWithCharacterReferences(input, job.prompt, job.characterRefs || []);
       return { prepared: true };
     } finally {
       activeJobId = null;

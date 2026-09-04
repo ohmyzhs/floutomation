@@ -342,6 +342,10 @@ async function withFlowDebugger(tabId, operation) {
   try {
     await chrome.debugger.attach(target, "1.3");
     attached = true;
+    // Flow gates some input commits on document.hasFocus(). On Windows the
+    // Flow window is usually not the focused one while the queue runs, so
+    // emulate focus for this session; CDP input itself works without focus.
+    await chrome.debugger.sendCommand(target, "Emulation.setFocusEmulationEnabled", { enabled: true }).catch(() => {});
     return await operation(target);
   } catch (error) {
     const message = String(error?.message || error);
@@ -412,22 +416,23 @@ async function insertTrustedText(tabId, text, { clear = false } = {}) {
 }
 
 async function pressTrustedKey(tabId, key) {
-  if (!['@', "Enter"].includes(key)) throw new Error("허용되지 않은 Flow 특수 키 입력입니다.");
+  if (!["@", "Enter", "Escape"].includes(key)) throw new Error("허용되지 않은 Flow 특수 키 입력입니다.");
   return withFlowDebugger(tabId, async (target) => {
-    if (key === "Enter") {
+    if (key === "Enter" || key === "Escape") {
+      const keyCode = key === "Enter" ? 13 : 27;
       await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", {
         type: "rawKeyDown",
-        key: "Enter",
-        code: "Enter",
-        windowsVirtualKeyCode: 13,
-        nativeVirtualKeyCode: 13
+        key,
+        code: key,
+        windowsVirtualKeyCode: keyCode,
+        nativeVirtualKeyCode: keyCode
       });
       await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", {
         type: "keyUp",
-        key: "Enter",
-        code: "Enter",
-        windowsVirtualKeyCode: 13,
-        nativeVirtualKeyCode: 13
+        key,
+        code: key,
+        windowsVirtualKeyCode: keyCode,
+        nativeVirtualKeyCode: keyCode
       });
       return { pressed: key };
     }
@@ -2131,7 +2136,7 @@ async function handleUiMessage(message) {
       if (existing.windowId) await chrome.windows.update(existing.windowId, { focused: true });
       return { opened: true, tabId: existing.id };
     }
-    const tab = await chrome.tabs.create({ url: "https://labs.google/fx/tools/flow/" });
+    const tab = await chrome.tabs.create({ url: "https://flow.google.com/" });
     return { opened: true, tabId: tab.id };
   }
 
