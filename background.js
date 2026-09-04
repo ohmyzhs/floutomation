@@ -354,23 +354,32 @@ async function withFlowDebugger(tabId, operation) {
   }
 }
 
+async function flowSelectAllModifier() {
+  const platform = await chrome.runtime.getPlatformInfo();
+  // Chrome DevTools Protocol modifier bits: Alt=1, Ctrl=2, Meta=4, Shift=8.
+  // Flow runs on macOS and Windows/Linux, so never hard-code Cmd for all hosts.
+  return platform?.os === "mac" ? 4 : 2;
+}
+
 async function insertTrustedText(tabId, text, { clear = false } = {}) {
   if (typeof text !== "string" || text.length > 50_000) throw new Error("입력할 프롬프트가 올바르지 않거나 너무 깁니다.");
   return withFlowDebugger(tabId, async (target) => {
     if (clear) {
+      const selectAllModifier = await flowSelectAllModifier();
       await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", {
         type: "rawKeyDown",
         key: "a",
         code: "KeyA",
-        modifiers: 4,
+        modifiers: selectAllModifier,
         windowsVirtualKeyCode: 65,
-        nativeVirtualKeyCode: 65
+        nativeVirtualKeyCode: 65,
+        commands: ["selectAll"]
       });
       await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", {
         type: "keyUp",
         key: "a",
         code: "KeyA",
-        modifiers: 4,
+        modifiers: selectAllModifier,
         windowsVirtualKeyCode: 65,
         nativeVirtualKeyCode: 65
       });
@@ -379,7 +388,8 @@ async function insertTrustedText(tabId, text, { clear = false } = {}) {
         key: "Backspace",
         code: "Backspace",
         windowsVirtualKeyCode: 8,
-        nativeVirtualKeyCode: 8
+        nativeVirtualKeyCode: 8,
+        commands: ["deleteBackward"]
       });
       await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", {
         type: "keyUp",

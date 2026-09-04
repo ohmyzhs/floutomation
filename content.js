@@ -348,17 +348,17 @@
     });
   }
 
-  function placeCaretAtEnd(input) {
+  function placeTextSelection(input, { selectAll = false } = {}) {
     input.focus();
     if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) {
       const length = input.value.length;
-      input.setSelectionRange(length, length);
+      input.setSelectionRange(selectAll ? 0 : length, length);
       return;
     }
     const selection = window.getSelection();
     const range = document.createRange();
     range.selectNodeContents(input);
-    range.collapse(false);
+    if (!selectAll) range.collapse(false);
     selection?.removeAllRanges();
     selection?.addRange(range);
   }
@@ -367,7 +367,7 @@
     if (!(input instanceof HTMLElement) || !document.contains(input)) {
       throw new Error("Flow 입력란이 화면에서 사라졌습니다.");
     }
-    placeCaretAtEnd(input);
+    placeTextSelection(input, { selectAll: clear });
     const response = await chrome.runtime.sendMessage({
       type: "FLOW_TRUSTED_TYPE",
       text: String(text || ""),
@@ -1613,9 +1613,22 @@
       return;
     }
     await clickTrusted(control, { settleMs: 200 });
-    // Flow's Angular form can restore its previous value after a synthetic
-    // native setter. Clear with a real Cmd+A + Backspace in the focused input
-    // so "제목 없는 캐릭터" is replaced instead of receiving an appended name.
+    const prototype = control instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
+    if (setter) setter.call(control, value);
+    else control.value = value;
+    control.dispatchEvent(new InputEvent("input", {
+      bubbles: true,
+      inputType: "insertReplacementText",
+      data: value
+    }));
+    control.dispatchEvent(new Event("change", { bubbles: true }));
+    await sleep(150);
+    if (normalize(formControlText(control)) === normalize(value)) return;
+
+    // Keep a trusted replacement fallback for Flow variants that reject
+    // programmatic value setters. The focused input selection is explicitly
+    // expanded before the debugger sends SelectAll/Backspace.
     await insertTrustedText(control, value, { clear: true });
     control.dispatchEvent(new Event("change", { bubbles: true }));
     await sleep(350);

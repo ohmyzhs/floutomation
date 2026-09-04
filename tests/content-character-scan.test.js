@@ -240,9 +240,10 @@ test("Flow character detail names are edited and persisted before completion", (
   assert.match(contentSource, /수정완료\|finishediting\|save\(\?:name\)\?/);
   assert.match(contentSource, /뒤로\|돌아가기\|이전페이지\|back/);
   assert.match(contentSource, /edit\\s\*name\|이름\\s\*\(\?:수정\|편집\)/);
+  assert.match(contentSource, /setter\.call\(control, value\)/);
+  assert.match(contentSource, /inputType: "insertReplacementText"/);
   assert.match(contentSource, /await insertTrustedText\(control, value, \{ clear: true \}\)/);
   assert.match(contentSource, /control\.dispatchEvent\(new Event\("change"/);
-  assert.doesNotMatch(contentSource, /setter\.call\(control, ""\)/);
   assert.match(registrationSource, /setFormControlValue\(nameControl, character\.key\)/);
   assert.match(registrationSource, /FLOW_CHARACTER_NAME_SUBMITTED/);
   assert.match(registrationSource, /flowDetailUrl: currentCharacterDetailUrl\(\)/);
@@ -253,6 +254,16 @@ test("Flow character detail names are edited and persisted before completion", (
   assert.match(registrationSource, /await waitFor\(\(\) => !currentCharacterDetailUrl\(\)/);
   assert.match(registrationSource, /registrationVerified: true/);
   assert.match(registrationSource, /findRegisteredCharacterImage\(character\.key\)/);
+});
+
+test("trusted text replacement selects the full focused Flow field", async () => {
+  const backgroundSource = await readFile(new URL("../background.js", import.meta.url), "utf8");
+  assert.match(contentSource, /placeTextSelection\(input, \{ selectAll: clear \}\)/);
+  assert.match(backgroundSource, /async function flowSelectAllModifier/);
+  assert.match(backgroundSource, /platform\?\.os === "mac" \? 4 : 2/);
+  assert.match(backgroundSource, /modifiers: selectAllModifier/);
+  assert.match(backgroundSource, /commands: \["selectAll"\]/);
+  assert.match(backgroundSource, /commands: \["deleteBackward"\]/);
 });
 
 test("Flow ready events report the exact route for URL-based character recovery", () => {
