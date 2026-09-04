@@ -360,6 +360,9 @@ test("character anchors use Flow's @ shortcut instead of the generic asset menu"
   assert.match(contentSource, /await pressTrustedAtSign\(input\)/);
   assert.match(contentSource, /Flow's '@' shortcut opens the character-aware picker/);
   assert.match(contentSource, /editorText\.includes\(normalize\(key\)\)/);
+  assert.match(contentSource, /debugger-originated key events/);
+  assert.match(contentSource, /await clickTrusted\(assetButton/);
+  assert.match(contentSource, /await insertTrustedText\(input, " "\)/);
 });
 
 test("current Flow character ingredient chips count as anchor references", () => {

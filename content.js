@@ -407,7 +407,25 @@
     if (!response?.ok) {
       throw new Error(response?.error || "Flow 애셋 선택창을 여는 실제 키 입력을 전달하지 못했습니다.");
     }
-    await sleep(250);
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      if (findAssetPickerDialog()) return;
+      await sleep(100);
+    }
+    // Some current Flow builds render '@' but do not open its autocomplete
+    // popover for debugger-originated key events. Its prompt asset button then
+    // opens the same character-filtered picker while retaining the '@' token.
+    let node = input.parentElement;
+    for (let depth = 0; node && depth < 7; depth += 1, node = node.parentElement) {
+      const assetButton = Array.from(node.querySelectorAll("button")).find((candidate) => {
+        if (!visible(candidate)) return false;
+        const descriptor = accessibleDescriptor(candidate).replace(/\s+/g, "").toLowerCase();
+        return /프롬프트상자에소재추가|add(?:media|asset)to(?:the)?prompt/.test(descriptor);
+      });
+      if (assetButton) {
+        await clickTrusted(assetButton, { settleMs: 500 });
+        return;
+      }
+    }
   }
 
   async function clickTrusted(element, { settleMs = UI_SETTLE_MS } = {}) {
@@ -624,6 +642,7 @@
     const beforeReferenceCount = findCharacterReferenceControls(input).length;
     // Flow's '@' shortcut opens the character-aware picker. Opening the generic
     // asset menu instead can add only an image chip, without a usable character anchor.
+    await insertTrustedText(input, " ");
     await pressTrustedAtSign(input);
     let dialog = await waitFor(findAssetPickerDialog, {
       timeoutMs: 8_000,
