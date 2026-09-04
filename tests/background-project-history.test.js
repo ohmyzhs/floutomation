@@ -58,3 +58,43 @@ test("intro queues do not carry restored scene mapping cards into a new intro ru
   const setQueueSource = source.slice(setQueueStart, setQueueEnd);
   assert.match(setQueueSource, /!isIntroQueue \|\| \["intro", "thumbnail"\]\.includes/);
 });
+
+test("a queue built from a prompts file is snapshotted before any image exists", async () => {
+  const { uniqueAssets } = await import("../lib/asset-mapping.js").catch(() => ({}));
+  const snapshotStart = source.indexOf("function projectMappingSnapshot");
+  const snapshotEnd = source.indexOf("function restoreProjectMappings", snapshotStart);
+  const build = new Function(
+    "uniqueAssets",
+    `${source.slice(snapshotStart, snapshotEnd)} return projectMappingSnapshot;`
+  );
+  const projectMappingSnapshot = build(uniqueAssets || ((values) => (Array.isArray(values) ? values : [])));
+
+  // Exactly what SET_QUEUE holds right after a flow_prompts file is loaded:
+  // numbered scenes with titles and character bindings, nothing generated.
+  const snapshot = projectMappingSnapshot({
+    assetCatalog: [],
+    jobs: [
+      { number: 1, sourceNumber: 1, sourceMode: "scene", title: "장면 001", characterRefs: ["suok"] },
+      { number: 2, sourceNumber: 2, sourceMode: "scene", title: "장면 002", characterRefs: [] },
+      { number: 1, sourceNumber: 1, sourceMode: "intro", title: "인트로 001", characterRefs: ["mama"] }
+    ]
+  });
+
+  assert.deepEqual(snapshot.map((job) => `${job.sourceMode}:${job.sourceNumber}`), [
+    "scene:1",
+    "scene:2",
+    "intro:1"
+  ]);
+  assert.deepEqual(snapshot.map((job) => job.title), ["장면 001", "장면 002", "인트로 001"]);
+  assert.deepEqual(snapshot[0].characterRefs, ["suok"]);
+  assert.deepEqual(snapshot[0].assets, []);
+  assert.equal(snapshot[0].imagesGenerated, 0);
+});
+
+test("SET_QUEUE saves characters and the scene roster as soon as the queue is applied", () => {
+  const setQueueStart = source.indexOf('if (message.type === "SET_QUEUE")');
+  const setQueueEnd = source.indexOf('if (message.type === "SYNC_FLOW_STATE")', setQueueStart);
+  const setQueueSource = source.slice(setQueueStart, setQueueEnd);
+  assert.match(setQueueSource, /await archiveProjectCharacters\(nextState\);/);
+  assert.match(setQueueSource, /await archiveProjectMappings\(nextState\);/);
+});
