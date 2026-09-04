@@ -178,7 +178,7 @@ test("submit control lookup prefers the character form submit button and keeps r
   assert.match(contentSource, /const currentButton = findSubmitControl\(currentInput\)/);
 });
 
-test("character generation clicks the exact arrow_forward 만들기 button directly", () => {
+test("character generation uses a trusted coordinate click and Enter fallback", () => {
   assert.match(submitSource, /function isCharacterSubmitButton/);
   assert.match(submitSource, /textContent \|\| ""\)\.trim\(\) === "arrow_forward"/);
   assert.match(submitSource, /mat-icon/);
@@ -186,11 +186,13 @@ test("character generation clicks the exact arrow_forward 만들기 button direc
   assert.match(submitSource, /생성\\s\*시작\|create\|generate\|submit/);
   assert.match(submitSource, /button, \[role="button"\]/);
   assert.match(submitSource, /function findCharacterSubmitButton/);
-  assert.match(submitSource, /button\.click\(\)/);
   assert.match(contentSource, /const button = findCharacterSubmitButton\(input\)/);
-  assert.match(contentSource, /await clickCharacterSubmit\(submitButton\)/);
+  assert.match(contentSource, /const primarySubmissionDiagnostic = submissionDiagnostic\(submitButton, "만들기 버튼 좌표 클릭"\)/);
+  assert.match(contentSource, /await clickTrusted\(submitButton\)/);
   assert.match(contentSource, /findSubmitControl: findCharacterSubmitButton/);
-  assert.match(contentSource, /retrySubmit: clickTrusted/);
+  assert.match(contentSource, /retrySubmit: submitWithTrustedEnter/);
+  assert.match(contentSource, /submissionDiagnostic: ""/);
+  assert.doesNotMatch(contentSource, /button\.click 직접 전송/);
 });
 
 test("character detail navigation is a start signal and failed retries resume registration", () => {

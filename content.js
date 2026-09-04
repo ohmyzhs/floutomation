@@ -699,17 +699,6 @@
     return Array.from(document.querySelectorAll('button, [role="button"]')).find(isCharacterSubmitButton) || null;
   }
 
-  async function clickCharacterSubmit(button) {
-    if (!submitControlIsEnabled(button)) {
-      throw new Error("Flow 캐릭터 만들기 버튼이 비활성 상태입니다.");
-    }
-    button.scrollIntoView?.({ block: "nearest", inline: "nearest" });
-    button.focus({ preventScroll: true });
-    button.click();
-    await sleep(UI_SETTLE_MS);
-    return { ok: true, clicked: true, method: "button.click" };
-  }
-
   function assetIdFromDetailUrl(value) {
     try {
       const url = new URL(String(value || ""), location.href);
@@ -1877,31 +1866,40 @@
       const baselineFailureCount = captureGenerationFailureCards().length;
       const refreshedSubmitButton = findCharacterSubmitButton(input);
       if (submitControlIsEnabled(refreshedSubmitButton)) submitButton = refreshedSubmitButton;
-      await clickCharacterSubmit(submitButton);
+      const primarySubmissionDiagnostic = submissionDiagnostic(submitButton, "만들기 버튼 좌표 클릭");
+      await clickTrusted(submitButton);
       await emitReliable({
         type: "FLOW_CHARACTER_PROGRESS",
         characterId: character.id,
         phase: "generating",
         stage: "캐릭터 생성 요청 접수 확인 중",
         progress: 24,
-        submissionDiagnostic: submissionDiagnostic(submitButton, "button.click 직접 전송")
+        submissionDiagnostic: primarySubmissionDiagnostic
       });
       await confirmGenerationStarted({
         input,
         expectedPrompt: character.prompt,
         baselineFailureCount,
         findSubmitControl: findCharacterSubmitButton,
-        retrySubmit: clickTrusted,
+        retrySubmit: submitWithTrustedEnter,
         additionalStartSignal: findCharacterRegistrationSurface,
-        failureMessage: "Flow 캐릭터 만들기 버튼을 찾았지만 생성 요청이 시작되지 않았습니다. button.click 직접 실행 후 같은 버튼에 실제 좌표 클릭까지 재시도했으나 생성 신호를 확인하지 못했습니다.",
+        failureMessage: "Flow 캐릭터 만들기 버튼을 실제 좌표로 클릭한 뒤 키보드 Enter까지 재시도했지만 생성 신호를 확인하지 못했습니다.",
         onRetry: async (currentButton) => emitReliable({
           type: "FLOW_CHARACTER_PROGRESS",
           characterId: character.id,
           phase: "generating",
-          stage: "생성 시작 신호 없음 · 같은 만들기 버튼 실제 좌표 클릭 재시도",
+          stage: "생성 시작 신호 없음 · 만들기 버튼 Enter 재시도",
           progress: 24,
-          submissionDiagnostic: submissionDiagnostic(currentButton, "만들기 버튼 좌표 클릭 재시도")
+          submissionDiagnostic: submissionDiagnostic(currentButton, "만들기 버튼 Enter 재시도")
         })
+      });
+      await emitReliable({
+        type: "FLOW_CHARACTER_PROGRESS",
+        characterId: character.id,
+        phase: "generating",
+        stage: "캐릭터 생성 요청 확인 · 결과 대기 중",
+        progress: 28,
+        submissionDiagnostic: ""
       });
 
       const result = await finishCharacterRegistration(

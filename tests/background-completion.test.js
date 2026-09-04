@@ -60,6 +60,11 @@ test("background captures and restores the generated character detail URL", () =
   assert.doesNotMatch(backgroundSource, /FLOW_TRUSTED_DOUBLE_CLICK/);
 });
 
+test("character submission diagnostics clear after Flow accepts the request", () => {
+  assert.match(backgroundSource, /hasOwnProperty\.call\(message, "submissionDiagnostic"\)/);
+  assert.match(backgroundSource, /character\.submissionDiagnostic = ""/);
+});
+
 test("Flow sync repairs automatic character completions that are absent from named cards", () => {
   assert.match(backgroundSource, /automaticCompletion/);
   assert.match(backgroundSource, /Flow 이름 미확인 · 다시 생성 대기/);

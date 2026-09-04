@@ -997,6 +997,7 @@ async function captureActiveCharacterDetailRoute(tabId, value) {
     if (!character || character.status === "completed") return;
     character.flowCharacterId = detail.characterId;
     character.flowDetailUrl = detail.url;
+    character.submissionDiagnostic = "";
     if (!character.nameSubmittedAt) character.stage = "Flow 캐릭터 상세 URL 확인 · 이름 저장 중";
     character.progress = Math.max(35, Number(character.progress || 0));
     character.lastHeartbeatAt = Date.now();
@@ -1277,6 +1278,7 @@ async function handleFlowEvent(message, sender) {
         && (!state.flowProjectId || state.flowProjectId === readyDetail.projectId)) {
         active.flowCharacterId = readyDetail.characterId;
         active.flowDetailUrl = readyDetail.url;
+        active.submissionDiagnostic = "";
         if (!active.nameSubmittedAt) active.stage = "Flow 캐릭터 상세 URL 확인 · 이름 저장 중";
         active.progress = Math.max(35, Number(active.progress || 0));
       }
@@ -1387,7 +1389,9 @@ async function handleFlowEvent(message, sender) {
       character.stage = String(message.stage || character.stage);
       character.progress = Math.max(character.progress, Math.min(96, Number(message.progress || 0)));
       character.detectedImages = Math.max(Number(character.detectedImages || 0), Number(message.detectedImages || 0));
-      if (message.submissionDiagnostic) character.submissionDiagnostic = String(message.submissionDiagnostic);
+      if (Object.prototype.hasOwnProperty.call(message, "submissionDiagnostic")) {
+        character.submissionDiagnostic = String(message.submissionDiagnostic || "");
+      }
       character.lastHeartbeatAt = Date.now();
       state.flowConnected = true;
       state.tabId = tabId;
@@ -1405,6 +1409,7 @@ async function handleFlowEvent(message, sender) {
         character.flowDetailUrl = detail.url;
       }
       character.nameSubmittedAt = Date.now();
+      character.submissionDiagnostic = "";
       character.stage = `@${character.key} 이름 입력 · Flow 저장 확인 중`;
       character.progress = Math.max(92, Number(character.progress || 0));
       character.lastHeartbeatAt = Date.now();
