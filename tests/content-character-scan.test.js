@@ -292,6 +292,9 @@ test("current Flow pending tiles prevent early character or scene completion", (
 test("current Flow asset popover can locate the character picker and its add action", () => {
   assert.match(assetPickerSource, /flow-add-menu-popover-content/);
   assert.match(assetPickerSource, /add-menu-popover-container/);
+  assert.match(assetPickerSource, /\[role="dialog"\]/);
+  assert.match(assetPickerSource, /hasAssetTabs/);
+  assert.ok(!assetPickerSource.includes("dialogRect.width * 0.3"));
   assert.ok(assetPickerSource.includes("애셋\\s*검색|search\\s*assets?"));
   assert.match(assetPickerSource, /프롬프트에 추가/);
   assert.match(contentSource, /flow-character-ingredient-chip/);

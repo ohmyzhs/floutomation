@@ -498,11 +498,11 @@
         const descriptor = `${control.getAttribute("aria-label") || ""} ${control.getAttribute("placeholder") || ""}`;
         return /애셋\s*검색|search\s*assets?/i.test(descriptor);
       });
-      const addButton = Array.from(dialog.querySelectorAll("button")).find((button) => {
-        const text = String(button.textContent || button.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim();
-        return /^(?:프롬프트에 추가|add to prompt)$/i.test(text);
+      const hasAssetTabs = Array.from(dialog.querySelectorAll('[role="tab"]')).some((tab) => {
+        const text = normalize(`${tab.textContent || ""} ${tab.getAttribute("aria-label") || ""}`);
+        return /캐릭터$|character$/i.test(text);
       });
-      if (search && addButton) return dialog;
+      if (search && hasAssetTabs) return dialog;
     }
     return null;
   }
@@ -518,20 +518,16 @@
 
   function findCharacterAssetFilter(dialog = findAssetPickerDialog()) {
     if (!dialog) return null;
-    const dialogRect = dialog.getBoundingClientRect();
     const isCharacterLabel = (element) => {
       if (!(element instanceof HTMLElement) || !visible(element) || element.closest('[role="option"]')) return false;
       const text = String(element.textContent || element.getAttribute("aria-label") || "")
         .replace(/accessibility_new|person|character/gi, (token) => token.toLowerCase() === "character" ? "character" : "")
         .replace(/\s+/g, "")
         .toLowerCase();
-      const rect = element.getBoundingClientRect();
-      return (text === "캐릭터" || text === "character")
-        && (document.visibilityState === "hidden"
-          || rect.left + rect.width / 2 < dialogRect.left + dialogRect.width * 0.3);
+      return text === "캐릭터" || text === "character";
     };
 
-    const semantic = Array.from(dialog.querySelectorAll('button, [role="tab"], [role="button"]')).find(isCharacterLabel);
+    const semantic = Array.from(dialog.querySelectorAll('[role="tab"], button, [role="button"]')).find(isCharacterLabel);
     if (semantic) return semantic;
     const label = Array.from(dialog.querySelectorAll("div, span, p"))
       .filter((element) => element.children.length === 0)
@@ -546,17 +542,32 @@
       error: "Flow 애셋 창에서 '캐릭터' 필터를 찾지 못했습니다."
     });
     await clickTrusted(characterFilter, { settleMs: 800 });
-    return waitFor(() => {
+    let selectedDialog = await waitFor(() => {
       const currentDialog = findAssetPickerDialog();
       const currentFilter = currentDialog ? findCharacterAssetFilter(currentDialog) : null;
       return currentDialog && currentFilter && settingControlSelected(currentFilter) && findAssetSearchInput(currentDialog)
         ? currentDialog
         : null;
     }, {
-      timeoutMs: 5_000,
+      timeoutMs: 1_500,
       intervalMs: 100,
-      error: "Flow 애셋 창의 캐릭터 필터를 선택한 뒤 검색 화면이 준비되지 않았습니다."
-    });
+      error: ""
+    }).catch(() => null);
+    if (!selectedDialog && document.contains(characterFilter)) {
+      characterFilter.click();
+      selectedDialog = await waitFor(() => {
+        const currentDialog = findAssetPickerDialog();
+        const currentFilter = currentDialog ? findCharacterAssetFilter(currentDialog) : null;
+        return currentDialog && currentFilter && settingControlSelected(currentFilter) && findAssetSearchInput(currentDialog)
+          ? currentDialog
+          : null;
+      }, {
+        timeoutMs: 5_000,
+        intervalMs: 100,
+        error: "Flow 애셋 창의 캐릭터 필터를 선택한 뒤 검색 화면이 준비되지 않았습니다."
+      });
+    }
+    return selectedDialog;
   }
 
   function findCharacterAssetOption(dialog, key) {
@@ -671,17 +682,6 @@
       intervalMs: 100,
       error: `@${key} 연결을 위한 Flow 애셋 선택창이 열리지 않았습니다.`
     });
-    const pickerTab = Array.from(dialog.querySelectorAll('mat-list-item[role="tab"], [role="tab"]')).find((tab) => {
-      return tab instanceof HTMLElement && visible(tab) && /캐릭터$|character$/i.test(normalize(tab.textContent));
-    });
-    if (pickerTab && !settingControlSelected(pickerTab)) {
-      await clickTrusted(pickerTab, { settleMs: 700 });
-      dialog = await waitFor(findAssetPickerDialog, {
-        timeoutMs: 5_000,
-        intervalMs: 100,
-        error: "Flow 애셋 창의 캐릭터 탭을 선택하지 못했습니다."
-      });
-    }
     const activeCharacterFilter = findCharacterAssetFilter(dialog);
     if (!activeCharacterFilter || !settingControlSelected(activeCharacterFilter)) {
       dialog = await selectCharacterAssetFilter(dialog);
