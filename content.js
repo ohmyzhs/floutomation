@@ -597,6 +597,14 @@
   }
 
   function findCharacterReferenceControls(input) {
+    // Current Flow renders prompt references as sibling custom elements, not
+    // necessarily under the editor's immediate container. Count the actual
+    // ingredient components first; walking only a few editor ancestors misses
+    // visibly inserted chips and incorrectly blocks submission.
+    const explicitChips = Array.from(document.querySelectorAll("flow-character-ingredient-chip, .mention-chip"))
+      .filter((chip) => chip instanceof HTMLElement && visible(chip))
+      .map((chip) => chip.querySelector("button") || chip);
+    if (explicitChips.length) return explicitChips;
     let node = input?.parentElement || null;
     for (let depth = 0; node && depth < 7; depth += 1, node = node.parentElement) {
       const matches = Array.from(node.querySelectorAll("flow-character-ingredient-chip button.chip-container, button.chip-container, button")).filter((button) => {

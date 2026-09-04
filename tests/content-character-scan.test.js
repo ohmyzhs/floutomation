@@ -366,6 +366,7 @@ test("character anchors use Flow's @ shortcut instead of the generic asset menu"
 });
 
 test("current Flow character ingredient chips count as anchor references", () => {
+  assert.match(contentSource, /document\.querySelectorAll\("flow-character-ingredient-chip, \.mention-chip"\)/);
   assert.match(contentSource, /flow-character-ingredient-chip button\.chip-container/);
   assert.match(contentSource, /accessibility_new/);
 });
