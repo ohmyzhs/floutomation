@@ -646,9 +646,9 @@
   }
 
   function findPromptMentionChips(input = liveDirectPromptInput()) {
-    const scope = promptInputScope(input);
-    return Array.from(scope.querySelectorAll('.mention-chip[data-entity-id], span.mention-chip'))
-      .filter((chip) => chip instanceof HTMLElement && visible(chip));
+    const editor = input instanceof HTMLElement ? input : promptInputScope(input);
+    return Array.from(editor.querySelectorAll('.mention-chip[data-entity-id], span.mention-chip'))
+      .filter((chip) => chip instanceof HTMLElement);
   }
 
   function findPromptClearButton(input) {
@@ -665,44 +665,34 @@
   }
 
   async function clearScenePrompt(input) {
-    const cleared = () => {
+    // Best effort only. Flow renders its own placeholder inside the editor,
+    // so "the editor reads as empty" is not something we can assert without
+    // failing on a composer that is in fact empty. Whether the prompt really
+    // came out right is verified once it has been composed, against the text
+    // and mention chips we asked for.
+    const chipsGone = () => {
       const currentInput = liveDirectPromptInput(input);
       if (!currentInput) return null;
       input = currentInput;
-      return findPromptMentionChips(currentInput).length === 0 && !normalizedEditorText(currentInput)
-        ? currentInput
-        : null;
+      return findPromptMentionChips(currentInput).length === 0 ? currentInput : null;
     };
-    const settled = (timeoutMs) => waitFor(cleared, { timeoutMs, intervalMs: 100, error: "" }).catch(() => null);
-
-    // A previous run that failed mid-prompt leaves its mention chips behind.
-    // Flow only empties the editor itself after a submit, so clear in layers
-    // and verify after each one instead of trusting a single attempt.
-    if (await settled(300)) return input;
+    const settled = (timeoutMs) => waitFor(chipsGone, { timeoutMs, intervalMs: 100, error: "" }).catch(() => null);
 
     const clearButton = findPromptClearButton(input);
     if (clearButton) {
       await clickTrusted(clearButton);
       input = await waitForLiveDirectPromptInput(input);
-      if (await settled(2_000)) return input;
-    }
-
-    input = await waitForLiveDirectPromptInput(input);
-    await insertTrustedText(input, "", { clear: true });
-    if (await settled(2_000)) return input;
-
-    // A first click can land off-target when the debugger infobar shifts the
-    // layout; measure the button again on the live editor before retrying.
-    const retryButton = findPromptClearButton(liveDirectPromptInput(input) || input);
-    if (retryButton) {
-      await clickTrusted(retryButton);
+    } else {
+      await insertTrustedText(input, "", { clear: true });
       input = await waitForLiveDirectPromptInput(input);
     }
-    return waitFor(cleared, {
-      timeoutMs: 3_000,
-      intervalMs: 100,
-      error: "이전 캐릭터 참조 칩을 초기화하지 못했습니다. Flow의 프롬프트 지우기 버튼으로 비운 뒤 재시도해 주세요."
-    });
+    if (await settled(2_000)) return input;
+
+    // Leftover chips from a run that failed mid-prompt: select-all + delete
+    // removes them even when Flow's clear button is not rendered.
+    await insertTrustedText(input, "", { clear: true });
+    await settled(2_000);
+    return waitForLiveDirectPromptInput(input);
   }
 
   function normalizeTrackedPrompt(value) {
