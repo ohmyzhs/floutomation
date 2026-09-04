@@ -1026,7 +1026,11 @@ async function sendManualPrompt(editorKey, { edited = false } = {}) {
   const id = rest.join(":");
   const payload = { [target.idKey]: id };
   if (edited) {
-    const draft = String(promptDrafts.get(editorKey) ?? "").trim();
+    // The field itself is the source of truth: an editor that was opened and
+    // sent without a keystroke never fires "input", so the draft map is empty
+    // while the textarea already holds the saved prompt.
+    const field = document.querySelector(`[data-prompt-draft="${CSS.escape(editorKey)}"]`);
+    const draft = String(field ? field.value : (promptDrafts.get(editorKey) ?? "")).trim();
     if (!draft) throw new Error("보낼 프롬프트가 비어 있습니다.");
     payload.prompt = draft;
   }
