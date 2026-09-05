@@ -216,22 +216,25 @@ test("archive filenames use the normalized Flow project title", () => {
   assert.equal(sanitizeArchiveFilename("title/with:unsafe*chars"), "title_with_unsafe_chars");
 });
 
-test("media card links are fetched as the stored original on flow.google.com", () => {
-  // Verified in the reference agent (2026-09-04): the bare lh3 token serves a
-  // 512px WebP preview, while flow.google.com/asb/<token>=s0 returns the
-  // stored original as image/jpeg.
+test("media card links are fetched as the stored original, not the WebP display size", () => {
+  // Live media card src (2026-09-04): the "-rw" directive asks for WebP and
+  // "s1600" resizes; "=s0" is the stored original, served as JPEG.
   assert.equal(
-    flowOriginalUrl("https://lh3.googleusercontent.com/asb/AB-nOUYVexGc"),
-    "https://flow.google.com/asb/AB-nOUYVexGc=s0"
+    flowOriginalUrl("https://flow.google.com/asb/AB-nOUbV5QF4mVBOiCpP=s1600-rw"),
+    "https://flow.google.com/asb/AB-nOUbV5QF4mVBOiCpP=s0"
   );
-  // A preview's own size directive must not survive, or we keep the preview.
+  // The lh3 host serves the same token; route it through the host whose
+  // session we hold and drop its directive the same way.
   assert.equal(
     flowOriginalUrl("https://lh3.googleusercontent.com/asb/AB-nOUYVexGc=s512-w512-h512"),
     "https://flow.google.com/asb/AB-nOUYVexGc=s0"
   );
+  assert.equal(
+    flowOriginalUrl("https://lh3.googleusercontent.com/asb/AB-nOUYVexGc"),
+    "https://flow.google.com/asb/AB-nOUYVexGc=s0"
+  );
   // Anything else is left exactly as it is.
   for (const url of [
-    "https://flow.google.com/asb/AB-nOUYVexGc=s0",
     "https://labs.google/fx/api/trpc/media.getMediaUrlRedirect?name=x",
     "https://example.test/other.png",
     ""
