@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   buildDownloadManifest,
+  flowOriginalUrl,
   sanitizeArchiveFilename,
   sanitizePathSegment
 } from "../lib/download-manifest.js";
@@ -213,4 +214,28 @@ test("archive filenames use the normalized Flow project title", () => {
     "015_종으로_팔려간_며느리_등의_점_세_개"
   );
   assert.equal(sanitizeArchiveFilename("title/with:unsafe*chars"), "title_with_unsafe_chars");
+});
+
+test("media card links are fetched as the stored original on flow.google.com", () => {
+  // Verified in the reference agent (2026-09-04): the bare lh3 token serves a
+  // 512px WebP preview, while flow.google.com/asb/<token>=s0 returns the
+  // stored original as image/jpeg.
+  assert.equal(
+    flowOriginalUrl("https://lh3.googleusercontent.com/asb/AB-nOUYVexGc"),
+    "https://flow.google.com/asb/AB-nOUYVexGc=s0"
+  );
+  // A preview's own size directive must not survive, or we keep the preview.
+  assert.equal(
+    flowOriginalUrl("https://lh3.googleusercontent.com/asb/AB-nOUYVexGc=s512-w512-h512"),
+    "https://flow.google.com/asb/AB-nOUYVexGc=s0"
+  );
+  // Anything else is left exactly as it is.
+  for (const url of [
+    "https://flow.google.com/asb/AB-nOUYVexGc=s0",
+    "https://labs.google/fx/api/trpc/media.getMediaUrlRedirect?name=x",
+    "https://example.test/other.png",
+    ""
+  ]) {
+    assert.equal(flowOriginalUrl(url), url);
+  }
 });

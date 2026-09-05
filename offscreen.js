@@ -1,5 +1,6 @@
 import { createStoredZip } from "./lib/zip-archive.js";
 import { detectImageExtension, replaceImageExtension } from "./lib/image-format.js";
+import { flowOriginalUrl } from "./lib/download-manifest.js";
 
 const archiveUrls = new Map();
 const FETCH_TIMEOUT_MS = 30_000;
@@ -22,7 +23,7 @@ async function fetchOriginalOnce(entry) {
   try {
     // Flow download endpoints require the signed-in Flow session. The final
     // flow-content.google response is permitted by manifest host access.
-    const response = await fetch(entry.url, {
+    const response = await fetch(flowOriginalUrl(entry.url), {
       credentials: "include",
       redirect: "follow",
       cache: "no-store",
