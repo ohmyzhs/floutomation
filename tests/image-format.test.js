@@ -9,7 +9,7 @@ test("Flow WebP originals keep a matching archive extension", () => {
     0x57, 0x45, 0x42, 0x50
   ]);
   assert.equal(detectImageExtension("image/webp", bytes), "webp");
-  assert.equal(replaceImageExtension("Scene_Images/001-1.jpeg", "webp"), "Scene_Images/001-1.webp");
+  assert.equal(replaceImageExtension("Scene_Images/001-01.jpeg", "webp"), "Scene_Images/001-01.webp");
 });
 
 test("image signatures override a misleading response content type", () => {

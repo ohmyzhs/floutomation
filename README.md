@@ -1,4 +1,4 @@
-# Flow Batch Studio <small>v0.9.39</small>
+# Flow Batch Studio <small>v0.9.37</small>
 
 Google Flow에서 캐릭터·장면·인트로·썸네일 이미지 작업을 순서대로 실행하고, 결과를 프로젝트별 ZIP 파일로 저장하는 Chrome 확장 프로그램입니다.
 
@@ -707,12 +707,12 @@ Flow 프로젝트 제목이 다음과 같다면:
 ```text
 015_종으로_팔려간_며느리_등의_점_세_개.zip
 └── Scene_Images/
-    ├── 001-1.webp
-    ├── 001-2.webp
-    ├── 002-1.webp
-    ├── 002-2.webp
-    ├── 002-3.webp
-    ├── 002-4.webp
+    ├── 001-01.webp
+    ├── 001-02.webp
+    ├── 002-01.webp
+    ├── 002-02.webp
+    ├── 002-03.webp
+    ├── 002-04.webp
     ├── intro1-1.webp
     ├── intro1-2.webp
     ├── thumbnail-1.webp
@@ -721,9 +721,9 @@ Flow 프로젝트 제목이 다음과 같다면:
 
 파일명:
 
-- 장면: `001-1.webp`, `001-2.webp`
+- 장면: `001-01.webp`, `001-02.webp`
 - 장면 번호: 세 자리
-- 장면 이미지 번호: 한 자리 (패딩 없음)
+- 장면 이미지 번호: 두 자리
 - 인트로: `intro1-1.webp`, `intro2-1.webp`
 - 썸네일: `thumbnail-1.webp`
 - 실제 ZIP 확장자는 Flow 원본의 WebP/PNG/JPEG 형식을 자동 감지해 맞춥니다.
@@ -815,4 +815,4 @@ npm run check
 1. `background.js`, `content.js`, `sidepanel.js`, `offscreen.js` 문법 검사
 2. Node 내장 테스트 러너로 전체 회귀 테스트 실행
 
-현재 버전은 `0.9.39`이며, 확장 프로그램 배포 전 `manifest.json`, `package.json`, `package-lock.json`의 버전을 함께 확인해야 합니다.
+현재 버전은 `0.9.37`이며, 확장 프로그램 배포 전 `manifest.json`, `package.json`, `package-lock.json`의 버전을 함께 확인해야 합니다.

@@ -1334,32 +1334,18 @@
     }) || null;
   }
 
-  function characterLibraryVisible() {
-    if (FLOW_CHARACTER_DETAIL_PATH.test(location.pathname)) return false;
-    return Array.from(document.querySelectorAll(
-      'flow-grid-tile-container, flow-character-tile, a[href*="/character/"]'
-    )).some((candidate) => candidate instanceof HTMLElement && visible(candidate));
-  }
-
   function findNewCharacterButton() {
-    // Flow has renamed this control before, so match the wording rather than
-    // one exact string.
-    const isNewCharacterLabel = (value) => {
-      const text = normalize(value);
-      if (!text) return false;
-      if (text === normalize("신규 캐릭터") || text === "newcharacter") return true;
-      if (text.length > 24 || !/캐릭터|character/.test(text)) return false;
-      return /신규|새|추가|만들기|생성|new|create|add/.test(text);
-    };
     const semanticControl = Array.from(document.querySelectorAll('button, [role="button"], a')).find((control) => {
       if (!visible(control)) return false;
-      return isNewCharacterLabel(control.textContent) || isNewCharacterLabel(control.getAttribute("aria-label"));
+      const text = normalize(control.textContent || control.getAttribute("aria-label"));
+      return text === normalize("신규 캐릭터") || text === "newcharacter";
     });
     if (semanticControl) return semanticControl;
 
     const label = Array.from(document.querySelectorAll("span, p, div")).find((element) => {
       if (!visible(element)) return false;
-      return isNewCharacterLabel(element.textContent);
+      const text = normalize(element.textContent);
+      return text === normalize("신규 캐릭터") || text === "newcharacter";
     });
     if (!label) return null;
 
@@ -1717,7 +1703,7 @@
       const backButton = findFlowBackButton();
       if (backButton) {
         await clickTrusted(backButton, { settleMs: NAVIGATION_SETTLE_MS });
-        await waitFor(() => findNewCharacterButton() || characterLibraryVisible() || findCharacterNavigationButton(), {
+        await waitFor(() => findNewCharacterButton() || findCharacterNavigationButton(), {
           timeoutMs: 15_000,
           intervalMs: 250,
           error: "Flow 캐릭터 목록으로 돌아오지 못했습니다."
@@ -1729,7 +1715,7 @@
       const navigationButton = findCharacterNavigationButton();
       if (navigationButton) {
         await clickTrusted(navigationButton, { settleMs: NAVIGATION_SETTLE_MS });
-        await waitFor(() => findNewCharacterButton() || characterLibraryVisible() || findCharacterCreatorInput(), {
+        await waitFor(() => findNewCharacterButton() || findCharacterCreatorInput(), {
           timeoutMs: 15_000,
           intervalMs: 250,
           error: "Flow 캐릭터 메뉴를 열지 못했습니다."
@@ -1738,17 +1724,17 @@
         // An empty Flow project opens the creator directly because there is no
         // character library yet. This is a valid zero-character scan and also
         // leaves the first creation form ready for runCharacter().
-        if (findCharacterCreatorInput() && !findNewCharacterButton() && !characterLibraryVisible()) {
+        if (findCharacterCreatorInput() && !findNewCharacterButton()) {
           return emptyCharacterScanResult();
         }
       }
     }
 
-    if (findCharacterCreatorInput() && !findNewCharacterButton() && !characterLibraryVisible()) {
+    if (findCharacterCreatorInput() && !findNewCharacterButton()) {
       const backButton = findFlowBackButton();
       if (backButton) {
         await clickTrusted(backButton, { settleMs: NAVIGATION_SETTLE_MS });
-        await waitFor(() => findNewCharacterButton() || characterLibraryVisible() || findCharacterNavigationButton(), {
+        await waitFor(() => findNewCharacterButton() || findCharacterNavigationButton(), {
           timeoutMs: 15_000,
           intervalMs: 250,
           error: "Flow 캐릭터 목록을 표시하지 못했습니다."
@@ -2520,20 +2506,8 @@
     }
     const projectTitle = currentProjectTitle();
     const allMediaAssets = await scanAllSceneMediaAssets();
-    // The character library is only needed to name character images and keep
-    // them out of the scene list. Every image is already in allMediaAssets, so
-    // a library that will not open costs labels, not the download.
-    let characterScan = { characterAssets: [] };
-    let characterScanError = "";
-    try {
-      characterScan = await scanFlowCharacters(characterKeys || []);
-      if (characterScan.inProgress) throw new Error("Flow 캐릭터 생성이 진행 중이라 다운로드 목록을 만들 수 없습니다.");
-    } catch (error) {
-      const message = String(error?.message || error);
-      if (/캐릭터 생성이 진행 중/.test(message)) throw error;
-      characterScan = { characterAssets: [] };
-      characterScanError = message;
-    }
+    const characterScan = await scanFlowCharacters(characterKeys || []);
+    if (characterScan.inProgress) throw new Error("Flow 캐릭터 생성이 진행 중이라 다운로드 목록을 만들 수 없습니다.");
     await enterDirectMediaWorkspace();
     const characterUrls = new Set((characterScan.characterAssets || []).map((asset) => asset.url));
     const sceneAssets = allMediaAssets.filter((asset) => !characterUrls.has(asset.url));
@@ -2542,7 +2516,6 @@
       projectTitle,
       sceneAssets,
       characterAssets: characterScan.characterAssets || [],
-      characterScanError,
       allMediaCount: allMediaAssets.length,
       removedCharacterMediaCount: allMediaAssets.length - sceneAssets.length
     };

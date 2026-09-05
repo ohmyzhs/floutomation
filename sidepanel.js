@@ -801,11 +801,8 @@ elements.downloadProjectButton.addEventListener("click", withUiError(async () =>
       result.thumbnailCount ? `썸네일 ${result.thumbnailCount}장` : "",
       result.characterCount ? `캐릭터 ${result.characterCount}장` : ""
     ].filter(Boolean).join(" · ");
-    const characterNote = result.characterScanError ? ` · 캐릭터 목록 확인 실패(${result.characterScanError})` : "";
-    elements.downloadStatus.textContent = `${result.archiveFilename} · ${totalMedia} · ${types}${extras}${mappingWarnings}${missing.length ? ` · 미확인 ${missing.join(" / ")}` : ""}${characterNote}`;
-    showToast(result.characterScanError
-      ? `${result.downloaded}개 이미지를 ZIP으로 저장했습니다. 캐릭터 목록을 열지 못해 캐릭터 이미지는 빠졌을 수 있습니다.`
-      : `${result.downloaded}개 이미지를 ZIP 파일 하나로 저장했습니다.`);
+    elements.downloadStatus.textContent = `${result.archiveFilename} · ${totalMedia} · ${types}${extras}${mappingWarnings}${missing.length ? ` · 미확인 ${missing.join(" / ")}` : ""}`;
+    showToast(`${result.downloaded}개 이미지를 ZIP 파일 하나로 저장했습니다.`);
   } catch (error) {
     const message = String(error?.message || error);
     elements.downloadProgress.classList.add("error");

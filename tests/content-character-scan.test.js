@@ -4,14 +4,6 @@ import test from "node:test";
 
 const contentSource = await readFile(new URL("../content.js", import.meta.url), "utf8");
 const contentGuardSource = contentSource.slice(0, contentSource.indexOf("const pageSessionId"));
-
-function sourceBetween(startMarker, endMarker) {
-  const start = contentSource.indexOf(startMarker);
-  const end = contentSource.indexOf(endMarker, start);
-  assert.notEqual(start, -1, `missing ${startMarker}`);
-  assert.notEqual(end, -1, `missing ${endMarker}`);
-  return contentSource.slice(start, end);
-}
 const scanStart = contentSource.indexOf("async function scanFlowCharacters");
 const scanEnd = contentSource.indexOf("async function setFormControlValue", scanStart);
 const scanSource = contentSource.slice(scanStart, scanEnd);
@@ -347,44 +339,19 @@ test("recovery without a persisted media boundary never attaches existing galler
 test("an empty Flow project accepts the direct character creator as a zero-character scan", () => {
   assert.match(
     scanSource,
-    /if \(findCharacterCreatorInput\(\) && !findNewCharacterButton\(\) && !characterLibraryVisible\(\)\) \{\s*return emptyCharacterScanResult\(\);\s*\}/
+    /if \(findCharacterCreatorInput\(\) && !findNewCharacterButton\(\)\) \{\s*return emptyCharacterScanResult\(\);\s*\}/
   );
 });
 
 test("returning from an empty creator accepts the project workspace instead of requiring a library", () => {
   assert.match(
     scanSource,
-    /waitFor\(\(\) => findNewCharacterButton\(\) \|\| characterLibraryVisible\(\) \|\| findCharacterNavigationButton\(\)/
+    /waitFor\(\(\) => findNewCharacterButton\(\) \|\| findCharacterNavigationButton\(\)/
   );
   assert.match(
     scanSource,
     /return emptyCharacterScanResult\("project-workspace"\)/
   );
-});
-
-test("a rendered character library counts as the menu having opened", () => {
-  // The create button has been renamed before; character tiles are the stable
-  // evidence that the library is on screen.
-  assert.match(
-    scanSource,
-    /waitFor\(\(\) => findNewCharacterButton\(\) \|\| characterLibraryVisible\(\) \|\| findCharacterCreatorInput\(\)/
-  );
-  const librarySource = sourceBetween("function characterLibraryVisible", "function findNewCharacterButton");
-  assert.match(librarySource, /flow-grid-tile-container, flow-character-tile, a\[href\*="\/character\/"\]/);
-  assert.match(librarySource, /FLOW_CHARACTER_DETAIL_PATH\.test\(location\.pathname\)/);
-});
-
-test("the new-character control is matched by wording rather than one exact label", () => {
-  const buttonSource = sourceBetween("function findNewCharacterButton", "function findCharacterModelButton");
-  assert.match(buttonSource, /신규\|새\|추가\|만들기\|생성\|new\|create\|add/);
-  assert.match(buttonSource, /캐릭터\|character/);
-});
-
-test("a character library that will not open no longer sinks the download", () => {
-  const assetScanSource = sourceBetween("async function scanFlowProjectAssets", "function diagnostics");
-  assert.match(assetScanSource, /characterScanError/);
-  assert.match(assetScanSource, /if \(\/캐릭터 생성이 진행 중\/\.test\(message\)\) throw error;/);
-  assert.match(assetScanSource, /characterScan = \{ characterAssets: \[\] \};/);
 });
 
 test("scene prompt preserves every character-anchor occurrence in its original position", () => {
