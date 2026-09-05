@@ -27,10 +27,10 @@ test("download manifest trusts oldest-first Flow card order and does not read pr
   assert.equal(manifest.folder, "Scene_Images");
   assert.equal(manifest.archiveFilename, "바보가_된_거상의_딸.zip");
   assert.deepEqual(manifest.entries.map((entry) => entry.filename), [
-    `${manifest.folder}/001-01.jpeg`,
-    `${manifest.folder}/001-02.jpeg`,
-    `${manifest.folder}/002-01.jpeg`,
-    `${manifest.folder}/002-02.jpeg`,
+    `${manifest.folder}/001-1.jpeg`,
+    `${manifest.folder}/001-2.jpeg`,
+    `${manifest.folder}/002-1.jpeg`,
+    `${manifest.folder}/002-2.jpeg`,
     `${manifest.folder}/saebyeol.jpeg`
   ]);
   assert.deepEqual(manifest.missingScenes, []);
@@ -54,10 +54,10 @@ test("download manifest retains ordinal pairing even when queue status is stale"
     characterAssets: []
   });
   assert.deepEqual(manifest.entries.map((entry) => [entry.url, entry.filename.split("/").pop()]), [
-    ["https://example.test/oldest-a", "001-01.jpeg"],
-    ["https://example.test/oldest-b", "001-02.jpeg"],
-    ["https://example.test/newest-a", "002-01.jpeg"],
-    ["https://example.test/newest-b", "002-02.jpeg"]
+    ["https://example.test/oldest-a", "001-1.jpeg"],
+    ["https://example.test/oldest-b", "001-2.jpeg"],
+    ["https://example.test/newest-a", "002-1.jpeg"],
+    ["https://example.test/newest-b", "002-2.jpeg"]
   ]);
 });
 
@@ -113,8 +113,8 @@ test("download manifest uses tracked asset IDs and labels intro and thumbnail jo
   });
 
   assert.deepEqual(manifest.entries.map((entry) => [entry.url, entry.filename.split("/").pop()]), [
-    ["https://example.test/scene-b", "001-01.jpeg"],
-    ["https://example.test/scene-a", "001-02.jpeg"],
+    ["https://example.test/scene-b", "001-1.jpeg"],
+    ["https://example.test/scene-a", "001-2.jpeg"],
     ["https://example.test/intro-1", "intro1-1.jpeg"],
     ["https://example.test/intro-2", "intro1-2.jpeg"],
     ["https://example.test/thumbnail-1", "thumbnail-1.jpeg"]
@@ -143,11 +143,11 @@ test("download manifest keeps every actual result and numbers variable-size scen
     characterAssets: []
   });
   assert.deepEqual(manifest.entries.map((entry) => entry.filename), [
-    "Scene_Images/001-01.jpeg",
-    "Scene_Images/002-01.jpeg",
-    "Scene_Images/002-02.jpeg",
-    "Scene_Images/002-03.jpeg",
-    "Scene_Images/002-04.jpeg"
+    "Scene_Images/001-1.jpeg",
+    "Scene_Images/002-1.jpeg",
+    "Scene_Images/002-2.jpeg",
+    "Scene_Images/002-3.jpeg",
+    "Scene_Images/002-4.jpeg"
   ]);
   assert.deepEqual(manifest.sceneAssetCounts.map((entry) => entry.count), [1, 4]);
   assert.deepEqual(manifest.missingScenes, []);
@@ -169,8 +169,8 @@ test("manual asset mapping overrides scan order and fixes the asset ID to one sc
     characterAssets: []
   });
   assert.deepEqual(manifest.entries.slice(0, 2).map((entry) => [entry.assetId, entry.filename]), [
-    ["asset-3", "Scene_Images/001-01.jpeg"],
-    ["asset-1", "Scene_Images/001-02.jpeg"]
+    ["asset-3", "Scene_Images/001-1.jpeg"],
+    ["asset-1", "Scene_Images/001-2.jpeg"]
   ]);
   assert.deepEqual(manifest.mappingWarnings, []);
 });
@@ -195,10 +195,10 @@ test("download manifest keeps automatic results when a scene also has manual map
   });
 
   assert.deepEqual(manifest.entries.map((entry) => entry.filename), [
-    "Scene_Images/025-01.jpeg",
-    "Scene_Images/025-02.jpeg",
-    "Scene_Images/025-03.jpeg",
-    "Scene_Images/025-04.jpeg"
+    "Scene_Images/025-1.jpeg",
+    "Scene_Images/025-2.jpeg",
+    "Scene_Images/025-3.jpeg",
+    "Scene_Images/025-4.jpeg"
   ]);
   assert.deepEqual(manifest.entries.map((entry) => entry.assetId), ["auto-1", "auto-2", "manual-1", "manual-2"]);
 });
