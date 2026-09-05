@@ -1604,6 +1604,23 @@ async function downloadProject() {
     });
     if (!scan?.ready) throw new Error(scan?.error || "Flow 프로젝트의 이미지 URL을 수집하지 못했습니다.");
 
+    const characterScanError = String(scan.characterScanError || "");
+    if (characterScanError) {
+      // Without the library scan nothing marked the character portraits, so
+      // keep them out of the scene list using the assets already on record.
+      const knownCharacterKeys = new Set(current.characters.flatMap((character) => uniqueAssets(character.resultAssets)
+        .flatMap((asset) => [asset.assetId, asset.detailUrl, asset.url])
+        .filter(Boolean)
+        .map(String)));
+      if (knownCharacterKeys.size) {
+        const before = (scan.sceneAssets || []).length;
+        scan.sceneAssets = (scan.sceneAssets || []).filter((asset) => ![asset?.assetId, asset?.detailUrl, asset?.url]
+          .filter(Boolean)
+          .some((key) => knownCharacterKeys.has(String(key))));
+        scan.removedCharacterMediaCount = Number(scan.removedCharacterMediaCount || 0) + (before - scan.sceneAssets.length);
+      }
+    }
+
     const synchronizedState = await updateState((draft) => {
       const charactersByName = new Map(
         (scan.characterAssets || []).map((asset) => [String(asset.name || "").trim().toLowerCase(), asset])
@@ -1672,6 +1689,7 @@ async function downloadProject() {
       sceneAssetCounts: manifest.sceneAssetCounts,
       allMediaCount: Number(scan.allMediaCount || manifest.scannedSceneCount),
       removedCharacterMediaCount: Number(scan.removedCharacterMediaCount || 0),
+      characterScanError,
       failures: []
     };
   } finally {
